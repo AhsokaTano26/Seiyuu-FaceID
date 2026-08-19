@@ -1,5 +1,7 @@
 # Model inventory
 
+[English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
+
 Weights are deliberately excluded from this repository. Do not add a weight
 until its exact download URL, checksum, source, version, and license have been
 recorded below.

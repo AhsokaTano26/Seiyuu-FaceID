@@ -1,5 +1,7 @@
 # seiyuu-faceid
 
+[English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
+
 Local-first face identification for a privately curated voice-actor photo
 collection. The runtime maps a face to a normalized embedding, searches a local
 gallery, and returns `recognized`, `review`, or `unknown`; it is not a fixed

@@ -1,5 +1,7 @@
 # Local data layout
 
+[English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
+
 - `raw/<identity>/`: user-provided reference images. You may add files there
   manually or through the web UI; tools never alter existing source images.
 - `aligned/`: accepted 112×112 face crops and `metadata.jsonl`.
