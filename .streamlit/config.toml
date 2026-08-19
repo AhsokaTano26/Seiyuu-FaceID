@@ -1,0 +1,8 @@
+[server]
+# This app is intentionally local-only: do not listen on LAN interfaces.
+address = "127.0.0.1"
+headless = true
+maxUploadSize = 50
+
+[browser]
+gatherUsageStats = false

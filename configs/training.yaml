@@ -1,0 +1,6 @@
+device: mps
+epochs: 20
+batch_size: 64
+learning_rate: 0.001
+embedding_size: 512
+loss: arcface

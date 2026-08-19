@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "seiyuu-faceid"
+version = "0.1.0"
+description = "Local-first ONNX face identification with a prototype gallery"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+authors = [{ name = "Tano" }]
+dependencies = [
+  "numpy>=2.0",
+  "opencv-python>=4.10",
+  "onnxruntime>=1.20",
+  "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.9"]
+training = ["torch>=2.5", "torchvision>=0.20", "scikit-learn>=1.5"]
+web = ["streamlit>=1.61"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/seiyuu_faceid"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]

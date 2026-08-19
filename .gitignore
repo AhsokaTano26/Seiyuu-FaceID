@@ -21,3 +21,39 @@ rad.json
 *.flf
 #Test results file
 TestResults.xml
+.DS_Store
+.idea/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+:memory:.ses
+
+# User data and third-party model weights are local-only.
+data/raw/*
+!data/raw/.gitkeep
+data/aligned/*
+!data/aligned/.gitkeep
+data/rejected/*
+!data/rejected/.gitkeep
+data/gallery/*
+!data/gallery/.gitkeep
+data/query/*
+!data/query/.gitkeep
+data/runtime/*
+!data/runtime/.gitkeep
+data/cache/*
+!data/cache/.gitkeep
+# Generated group-photo review previews and private selection manifests.
+data/review/*
+!data/review/.gitkeep
+# Split manifests contain private image paths and labels.
+data/splits/*
+!data/splits/.gitkeep
+# Private ad-hoc test samples are kept local.
+data/aaa/
+models/*.onnx
+models/*.pth
+models/*.pt
