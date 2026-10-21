@@ -54,7 +54,7 @@ def main() -> int:
                 min_sharpness=config.min_sharpness,
             )
             if quality.accepted:
-                engine.recognizer.embed(align_face(image, detection.landmarks))
+                engine.classifier.embed(align_face(image, detection.landmarks))
         recognizer_timings.append((time.perf_counter() - started) * 1000)
         started = time.perf_counter()
         for _ in range(args.batch_size):

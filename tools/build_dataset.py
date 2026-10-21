@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build aligned faces and, by default, rebuild the local embedding gallery."""
+"""Prepare aligned, reviewed training faces without replacing the deployed classifier."""
 
 from __future__ import annotations
 
@@ -14,30 +14,19 @@ from seiyuu_faceid.dataset.detections import (
     save_detection_records,
     scan_raw_detections,
 )
-from seiyuu_faceid.dataset.metadata import read_jsonl
 from seiyuu_faceid.dataset.scanner import scan_raw_dataset
 from seiyuu_faceid.dataset.selections import load_face_selections
-from seiyuu_faceid.gallery.builder import build_gallery
 from seiyuu_faceid.runtime.config import load_config
 from seiyuu_faceid.vision.detector import SCRFDDetector
-from seiyuu_faceid.vision.recognizer import ONNXRecognizer
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="configs/default.yaml")
     parser.add_argument(
-        "--skip-gallery",
-        action="store_true",
-        help="Only build aligned faces and metadata; do not rebuild the embedding gallery.",
-    )
-    parser.add_argument(
         "--scan-only",
         action="store_true",
-        help=(
-            "Detect all raw images and write the reusable cache, "
-            "without alignment or Gallery building."
-        ),
+        help=("Detect all raw images and write the reusable cache, without alignment or training."),
     )
     parser.add_argument(
         "--detection-cache",
@@ -48,8 +37,8 @@ def main() -> int:
         "--face-selections",
         default="data/review/raw_faces/face_selections.jsonl",
         help=(
-            "JSONL mapping a multi-face source_image to zero-based face_indexes. "
-            "Missing files mean group photos are kept out of the gallery."
+            "JSONL mapping every reviewed source_image to zero-based face_indexes. "
+            "Any image without a selection is kept out of the training dataset."
         ),
     )
     args = parser.parse_args()
@@ -75,8 +64,8 @@ def main() -> int:
         )
         sources, cached_records = scan_raw_detections(raw_root, detector)
         save_detection_records(cache_path, cached_records)
-    group_photos = sum(1 for record in cached_records.values() if len(record.detections) > 1)
-    print(f"Detection cache ready: {len(sources)} images; {group_photos} group photos.")
+    reviewable = sum(1 for record in cached_records.values() if record.detections)
+    print(f"Detection cache ready: {len(sources)} images; {reviewable} images require review.")
     if args.scan_only:
         return 0
     accepted, rejected = build_aligned_dataset(
@@ -90,23 +79,7 @@ def main() -> int:
         detection_records=cached_records,
     )
     print(f"Accepted faces: {accepted}; rejected records: {rejected}")
-    if args.skip_gallery:
-        return 0
-    if not accepted:
-        print("Gallery was not rebuilt because no accepted faces were produced.")
-        return 0
-    recognizer = ONNXRecognizer(
-        config.recognizer_model,
-        intra_op_threads=config.intra_op_threads,
-        inter_op_threads=config.inter_op_threads,
-    )
-    records = read_jsonl(config.root / "data/aligned/metadata.jsonl")
-    gallery = build_gallery(records, config.root / "data/aligned", recognizer)
-    gallery.save(config.gallery_vectors_path, config.gallery_metadata_path)
-    print(
-        f"Gallery rebuilt: {len(gallery.references)} references "
-        f"for {len(gallery.prototype_identities)} identities."
-    )
+    print("The deployed identity classifier is unchanged; new samples require retraining.")
     return 0
 
 

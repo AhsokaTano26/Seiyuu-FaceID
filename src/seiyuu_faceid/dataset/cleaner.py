@@ -31,11 +31,10 @@ def build_aligned_dataset(
     face_selections: dict[str, list[int]] | None = None,
     detection_records: Mapping[str, DetectionRecord] | None = None,
 ) -> tuple[int, int]:
-    """Build a gallery dataset without enrolling unreviewed faces from group photos.
+    """Build training faces without including any unreviewed detected face.
 
-    A single detected face is accepted normally. For a source image with several
-    faces, ``face_selections`` must name every zero-based face index to keep;
-    unselected faces are recorded as rejected rather than silently enrolled.
+    Every image with detections needs an explicit ``face_selections`` record.
+    A directory name is therefore a proposed label, never implicit ground truth.
     """
     import cv2
 
@@ -89,13 +88,13 @@ def build_aligned_dataset(
         # Compatibility for callers that still pass the former single-index mapping.
         if isinstance(selected_face_indexes, int):
             selected_face_indexes = [selected_face_indexes]
-        if len(detections) > 1 and selected_face_indexes is None:
+        if selected_face_indexes is None:
             rejected_records.extend(
                 _selection_rejection_records(source, detections, "selection_required")
             )
             continue
         selected_indexes = set(selected_face_indexes or [])
-        if any(index >= len(detections) for index in selected_indexes):
+        if any(index < 0 or index >= len(detections) for index in selected_indexes):
             rejected_records.extend(
                 _selection_rejection_records(
                     source, detections, "selected_face_index_out_of_range"
@@ -103,7 +102,7 @@ def build_aligned_dataset(
             )
             continue
         for face_index, detection in enumerate(detections):
-            if len(detections) > 1 and face_index not in selected_indexes:
+            if face_index not in selected_indexes:
                 rejected_records.append(
                     _selection_rejection_record(source, face_index, detection, "not_selected")
                 )

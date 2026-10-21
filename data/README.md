@@ -1,19 +1,11 @@
-# Local data layout
+# Local data
 
-[English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
+- `images/` at the repository root and `data/raw/`: original local photos; preserved.
+- `aligned/`: reviewed, aligned faces and metadata produced by sample preparation.
+- `training/`: the selected model's frozen 5,115 crops, trusted identity labels, source groups, train/validation/test indices and AdaFace + R50 features. Keep these for reproducibility.
+- `review/`: human face selections and content/label review records; character artwork and unlabeled photos remain distinct from real-person identity labels.
+- `gallery/`: original independent evaluation photos, retained as read-only source data. It is not a runtime model gallery.
+- `query/`: read-only batch classification inputs.
+- `runtime/detections.jsonl`: disposable face detection cache.
 
-- `raw/<identity>/`: user-provided reference images. You may add files there
-  manually or through the web UI; tools never alter existing source images.
-- `aligned/`: accepted 112×112 face crops and `metadata.jsonl`.
-- `rejected/`: JSONL records describing skipped faces/images.
-- `gallery/<identity>/`: user-provided labelled holdout images used only for
-  independent evaluation. This directory is never written by build tools.
-- `runtime/`: disposable generated artifacts: the production embedding gallery,
-  detection cache and evaluation reports.
-- `query/`: optional local input directory for batch recognition. Its images are
-  read-only query inputs and are never added to the Gallery.
-- `cache/`: legacy disposable cache location; new artifacts use `runtime/`.
-- `review/raw_faces/`: local numbered previews and the manual selection manifest
-  for multi-face source images.
-
-All of these directories are git-ignored except their `.gitkeep` placeholders.
+Private images, labels and generated model/data artifacts are excluded from Git. Superseded model experiments and generated reports have been removed. Evaluation of the selected model is `uv run python tools/evaluate.py`; `--reextract` verifies the deployed ONNX backbones as well.

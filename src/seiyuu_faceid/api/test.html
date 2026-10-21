@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>Seiyuu FaceID · 识别测试</title>
+  <style>
+    :root { color-scheme: light; --ink: #202938; --muted: #606a78; --line: #dde2e8; --primary: #245ac4; --error: #b42318; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f5f6f8; color: var(--ink); font: 15px/1.6 system-ui, sans-serif; }
+    main { max-width: 840px; margin: 40px auto; padding: 0 20px; }
+    header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+    h1 { font-size: 24px; margin: 0; letter-spacing: -.5px; }
+    h2 { font-size: 17px; margin: 0 0 12px; }
+    p { margin: 8px 0; }
+    a { color: var(--primary); }
+    .muted, small { color: var(--muted); }
+    small { font-size: 13px; }
+    section { background: white; border: 1px solid var(--line); border-radius: 12px; padding: 24px; margin: 16px 0; }
+    fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+    label { display: block; margin-bottom: 6px; font-weight: 600; }
+    input { font: inherit; max-width: 100%; }
+    input:not([type=file]) { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 6px; }
+    input[type=file] { width: 100%; border: 1px dashed #aeb9c8; border-radius: 8px; padding: 18px 12px; }
+    input::file-selector-button { margin-right: 12px; padding: 6px 10px; cursor: pointer; }
+    .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 18px; }
+    button { min-height: 44px; padding: 9px 18px; font: inherit; font-weight: 600; border: 1px solid var(--line); background: white; border-radius: 7px; cursor: pointer; }
+    button.primary { background: var(--primary); color: white; border-color: var(--primary); }
+    button:hover:not(:disabled) { filter: brightness(.94); }
+    button:active:not(:disabled) { transform: translateY(1px); }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    :focus-visible { outline: 3px solid #8ab4ff; outline-offset: 3px; }
+    details { margin-top: 18px; }
+    summary { cursor: pointer; min-height: 30px; }
+    .options { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 14px; margin-top: 14px; }
+    #status { min-height: 24px; margin-top: 16px; }
+    [data-error=true] { color: var(--error); }
+    #previews { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 16px; }
+    figure { width: 110px; margin: 0; }
+    figure img { display: block; width: 110px; height: 100px; object-fit: contain; border-radius: 6px; background: #f5f6f8; }
+    figcaption { margin-top: 4px; font-size: 12px; overflow-wrap: anywhere; color: var(--muted); }
+    .result + .result { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 16px; }
+    .result h3 { font-size: 15px; margin: 0 0 8px; overflow-wrap: anywhere; }
+    .result p { overflow-wrap: anywhere; }
+    pre { overflow: auto; max-height: 420px; padding: 16px; border-radius: 8px; background: #17202e; color: #edf2fa; font: 13px/1.6 ui-monospace, monospace; }
+    footer { color: var(--muted); font-size: 13px; }
+    @media (max-width: 600px) { main { margin: 20px auto; padding: 0 12px; } section { padding: 18px; } .options { grid-template-columns: 1fr; } h1 { font-size: 22px; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div><h1>Seiyuu FaceID</h1><p class="muted">上传照片，测试人脸检测与声优识别。</p></div>
+    <a href="/docs" target="_blank" rel="noopener">API 文档 ↗</a>
+  </header>
+  <section aria-label="上传与识别">
+    <form id="form">
+      <fieldset id="controls">
+        <label for="files">选择图片</label>
+        <input id="files" type="file" accept="image/jpeg,image/png,image/webp" multiple required aria-describedby="file-help">
+        <p id="file-help"><small>JPEG / PNG / WebP · 每张最多 10 MiB · 最多 8 张，多张自动批量识别。</small></p>
+        <div id="previews"></div>
+        <details>
+          <summary>可选设置</summary>
+          <div class="options">
+            <div><label for="key">API 密钥</label><input id="key" type="password" autocomplete="off" placeholder="未启用鉴权时留空"></div>
+            <div><label for="top-k">候选数量</label><input id="top-k" type="number" min="1" max="50" step="1" value="5" required></div>
+            <div><label for="threshold">接受阈值</label><input id="threshold" type="number" min="0" max="1" step="any" value="0.95" required></div>
+          </div>
+        </details>
+        <div class="actions">
+          <button id="recognize" class="primary" type="submit" disabled>开始识别</button>
+          <button id="detect" type="button" disabled>仅检测</button>
+          <small>仅检测限单张图片</small>
+        </div>
+      </fieldset>
+    </form>
+    <p id="status" class="muted" role="status" aria-live="polite">请选择图片。</p>
+  </section>
+  <section aria-label="识别结果" aria-busy="false" id="output">
+    <h2>结果</h2>
+    <div id="results"><p class="muted">结果会显示在这里。</p></div>
+    <details><summary>原始 JSON</summary><pre id="json">尚无结果</pre></details>
+  </section>
+  <footer>当前识别范围为已训练的 50 个身份。低概率或质量不足的人脸会标记为「待复核」。</footer>
+</main>
+<script type="module">
+  const $ = (id) => document.getElementById(id);
+  const filesInput = $("files"), controls = $("controls"), status = $("status");
+  let previewUrls = [], busy = false;
+
+  function message(text, isError = false) {
+    status.textContent = text;
+    status.dataset.error = String(isError);
+  }
+
+  function updateButtons() {
+    const count = filesInput.files.length;
+    $("recognize").disabled = busy || count < 1 || count > 8;
+    $("detect").disabled = busy || count !== 1;
+  }
+
+  filesInput.addEventListener("change", () => {
+    previewUrls.forEach((url) => URL.revokeObjectURL(url));
+    previewUrls = [];
+    $("previews").replaceChildren();
+    $("results").replaceChildren();
+    $("json").textContent = "尚无结果";
+    const files = Array.from(filesInput.files);
+    for (const file of files.slice(0, 8)) {
+      const figure = document.createElement("figure"), image = document.createElement("img");
+      const caption = document.createElement("figcaption"), url = URL.createObjectURL(file);
+      previewUrls.push(url);
+      image.src = url;
+      image.alt = file.name;
+      image.onerror = () => { image.hidden = true; };
+      caption.textContent = file.name;
+      figure.append(image, caption);
+      $("previews").append(figure);
+    }
+    message(files.length > 8 ? "一次最多选择 8 张图片，请重新选择。" : files.length ? `已选择 ${files.length} 张图片。` : "请选择图片。", files.length > 8);
+    updateButtons();
+  });
+
+  function paragraph(parent, text, isError = false) {
+    const node = document.createElement("p");
+    node.textContent = text;
+    node.dataset.error = String(isError);
+    parent.append(node);
+  }
+
+  function render(payload) {
+    $("results").replaceChildren();
+    for (const item of payload.results || [payload]) {
+      const block = document.createElement("div"), title = document.createElement("h3");
+      block.className = "result";
+      title.textContent = item.image?.filename || item.filename || "图片";
+      block.append(title);
+      if (item.error) {
+        paragraph(block, `处理失败：${item.error.message}`, true);
+      } else {
+        paragraph(block, `检测到 ${item.face_count} 张人脸 · 耗时 ${item.processing_ms} ms`);
+        if (!item.face_count) paragraph(block, "没有检测到人脸。");
+        item.faces.forEach((face, index) => {
+          const name = face.status === "recognized" ? face.identity : face.status === "review" ? "待复核" : "检测成功";
+          paragraph(block, `人脸 ${index + 1}：${name} · 位置 [${face.bbox.join(", ")}]`);
+          if (face.candidates?.length) paragraph(block, "候选：" + face.candidates.map((c) => `${c.identity} ${(c.score * 100).toFixed(2)}%`).join(" / "));
+          if (face.decision_reason === "low_probability") paragraph(block, "最高候选概率低于接受阈值。");
+          if (face.decision_reason === "quality_rejected") paragraph(block, "人脸尺寸或清晰度不足。");
+        });
+      }
+      $("results").append(block);
+    }
+  }
+
+  async function submit(detectionOnly) {
+    if (busy || !$("form").reportValidity()) return;
+    const files = Array.from(filesInput.files);
+    if (!files.length || files.length > 8) return message("请选择 1–8 张图片。", true);
+    if (detectionOnly && files.length !== 1) return message("仅检测时请选择一张图片。", true);
+    if (files.some((file) => file.size > 10 * 1024 * 1024)) return message("有图片超过 10 MiB，请重新选择。", true);
+    const batch = !detectionOnly && files.length > 1;
+    const path = detectionOnly ? "/v1/detect" : batch ? "/v1/recognize/batch" : "/v1/recognize";
+    const params = detectionOnly ? "" : "?" + new URLSearchParams({ top_k: $("top-k").value, probability_threshold: $("threshold").value });
+    const body = new FormData();
+    files.forEach((file) => body.append(batch ? "files" : "file", file));
+    const headers = {}, key = $("key").value.trim();
+    if (key) headers.Authorization = `Bearer ${key}`;
+    busy = true;
+    controls.disabled = true;
+    updateButtons();
+    $("output").setAttribute("aria-busy", "true");
+    $("results").replaceChildren();
+    $("json").textContent = "请求中…";
+    message(detectionOnly ? "检测中…" : "识别中…");
+    try {
+      const response = await fetch(path + params, { method: "POST", headers, body, signal: AbortSignal.timeout(120000) });
+      const payload = await response.json();
+      $("json").textContent = JSON.stringify(payload, null, 2);
+      if (!response.ok) throw new Error(response.status === 401 ? "密钥缺失或不正确，请检查「可选设置」。" : `HTTP ${response.status}：${payload.error?.message || "请求失败"}`);
+      render(payload);
+      const failed = payload.results?.filter((item) => item.error).length || 0;
+      message(failed ? `处理完成，${failed} 张图片失败，详情见下方。` : "处理完成。", failed > 0);
+    } catch (error) {
+      message(error instanceof TypeError ? "无法连接 API，请确认服务仍在运行。" : error.name === "TimeoutError" ? "请求超时，请重试。" : error.message, true);
+      if ($("json").textContent === "请求中…") $("json").textContent = "未收到有效 JSON 响应。";
+    } finally {
+      busy = false;
+      controls.disabled = false;
+      $("output").setAttribute("aria-busy", "false");
+      updateButtons();
+    }
+  }
+
+  $("form").addEventListener("submit", (event) => { event.preventDefault(); submit(false); });
+  $("detect").addEventListener("click", () => submit(true));
+</script>
+</body>
+</html>

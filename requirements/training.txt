@@ -1,4 +1,0 @@
--r runtime.txt
-torch>=2.5
-torchvision>=0.20
-scikit-learn>=1.5

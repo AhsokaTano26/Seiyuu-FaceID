@@ -32,6 +32,7 @@ __pycache__/
 :memory:.ses
 
 # User data and third-party model weights are local-only.
+images/
 data/raw/*
 !data/raw/.gitkeep
 data/aligned/*
@@ -57,3 +58,14 @@ data/aaa/
 models/*.onnx
 models/*.pth
 models/*.pt
+
+# Selected model bundle and frozen private training data.
+models/selected/
+data/training/
+data/experiments/
+
+# Local deployment bundles and server secrets.
+dist/
+.env
+.env.*
+!.env.example

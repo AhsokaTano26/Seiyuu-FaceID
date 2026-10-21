@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate numbered previews and a selection manifest for multi-face raw images."""
+"""Generate numbered previews and a selection manifest for every detected raw face."""
 
 from __future__ import annotations
 
@@ -75,7 +75,7 @@ def main() -> int:
         if image is None:
             continue
         detections = list(detection_records[source.relative_path.as_posix()].detections)
-        if len(detections) < 2:
+        if not detections:
             continue
         preview_path = output_dir / source.relative_path.with_suffix(".jpg")
         preview_path.parent.mkdir(parents=True, exist_ok=True)
@@ -90,7 +90,7 @@ def main() -> int:
             }
         )
     write_jsonl(selection_path, records)
-    print(f"Wrote {len(records)} multi-face review records to {selection_path}")
+    print(f"Wrote {len(records)} review records to {selection_path}")
     print("Open each preview, replace face_indexes: null with a list such as [0, 2], then build.")
     return 0
 

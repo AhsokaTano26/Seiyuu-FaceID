@@ -1,17 +1,14 @@
-# 模型清单
+# Selected model
 
-[English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
+The app uses only this bundle:
 
-模型权重刻意不纳入本仓库。在添加任何权重前，请在下表记录准确下载链接、校验和、来源、版本与许可证。
+- `det_500m.onnx`: SCRFD detector from [InsightFace buffalo_sc v0.7](https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_sc.zip).
+- `selected/adaface_ir101.onnx`: frozen AdaFace IR101/WebFace12M backbone, converted from the [official checkpoint](https://drive.google.com/file/d/1dswnavflETcnAuplZj1IOKKP0eM8ITgT/view) and [architecture](https://github.com/mk-minchul/AdaFace). Input: BGR, NCHW, 112×112, `(pixel/255 - 0.5)/0.5`; output: 512-D unit embedding.
+- `selected/w600k_r50.onnx`: frozen R50 from [InsightFace buffalo_m v0.7](https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_m.zip). Input: RGB, NCHW, 112×112, `pixel/127.5 - 1`; normalize its 512-D output.
+- `selected/classifier.npz`: locally fitted scaler, logistic regression coefficients and ordered identity labels. Concatenate AdaFace then R50 embeddings and divide by √2. Runtime reproduces sklearn's float32 scaling and stable multinomial softmax.
+- `selected/manifest.json`: source URLs and SHA-256 checksums, verified during model loading.
+- `selected/evaluation.json`, `holdout_scores.npz`, `runtime_verification.json`: evaluation evidence for the selected model.
 
-默认配置需要：
+The bundle is approximately 416 MiB. It is local-only and excluded from Git. Preserve all bundle files when moving the installation. PyTorch and sklearn are not runtime dependencies.
 
-| 用途 | 文件名 | 上游来源 | 许可证／限制 |
-| --- | --- | --- | --- |
-| 检测器 | `det_500m.onnx` | InsightFace [`buffalo_sc` v0.7 release](https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_sc.zip)，SCRFD-500MF | 上游预训练模型政策：仅限非商业研究。 |
-| 识别器 | `w600k_mbf.onnx` | InsightFace [`buffalo_sc` v0.7 release](https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_sc.zip)，MobileFaceNet | 上游预训练模型政策：仅限非商业研究。 |
-
-本地安装的 `buffalo_sc.zip` SHA-256 为：
-`57d31b56b6ffa911c8a73cfc1707c73cab76efe7f13b675a05223bf42de47c72`。
-
-InsightFace 代码使用 MIT 许可证，但其发布的预训练模型并非如此：上游 README 声明，无论手动下载还是通过库下载，权重均仅可用于非商业研究。本项目仅对自身代码使用 MIT，且不授予任何模型权重的使用权。使用其他模型时，请在放入 `models/` 前新增一行并注明其准确条款。
+AdaFace's upstream MIT notice is retained as `selected/ADAFACE_LICENSE`. InsightFace code is MIT; its published pretrained weights are restricted to non-commercial research under the upstream model policy. The project's own MIT license does not change upstream weight terms.

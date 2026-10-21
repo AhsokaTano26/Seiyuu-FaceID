@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Recognize every face in one image against the local gallery."""
+"""Recognize every face in one image with the selected supervised classifier."""
 
 from __future__ import annotations
 

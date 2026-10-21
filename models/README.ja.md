@@ -1,17 +1,14 @@
-# モデル一覧
+# Selected model
 
-[English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
+The app uses only this bundle:
 
-重みは意図的にこのリポジトリへ含めていません。重みを追加する前に、正確なダウンロード URL、チェックサム、提供元、版、ライセンスを以下に記録してください。
+- `det_500m.onnx`: SCRFD detector from [InsightFace buffalo_sc v0.7](https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_sc.zip).
+- `selected/adaface_ir101.onnx`: frozen AdaFace IR101/WebFace12M backbone, converted from the [official checkpoint](https://drive.google.com/file/d/1dswnavflETcnAuplZj1IOKKP0eM8ITgT/view) and [architecture](https://github.com/mk-minchul/AdaFace). Input: BGR, NCHW, 112×112, `(pixel/255 - 0.5)/0.5`; output: 512-D unit embedding.
+- `selected/w600k_r50.onnx`: frozen R50 from [InsightFace buffalo_m v0.7](https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_m.zip). Input: RGB, NCHW, 112×112, `pixel/127.5 - 1`; normalize its 512-D output.
+- `selected/classifier.npz`: locally fitted scaler, logistic regression coefficients and ordered identity labels. Concatenate AdaFace then R50 embeddings and divide by √2. Runtime reproduces sklearn's float32 scaling and stable multinomial softmax.
+- `selected/manifest.json`: source URLs and SHA-256 checksums, verified during model loading.
+- `selected/evaluation.json`, `holdout_scores.npz`, `runtime_verification.json`: evaluation evidence for the selected model.
 
-標準設定で必要なファイルは次のとおりです。
+The bundle is approximately 416 MiB. It is local-only and excluded from Git. Preserve all bundle files when moving the installation. PyTorch and sklearn are not runtime dependencies.
 
-| 役割 | ファイル名 | 提供元 | ライセンス／制限 |
-| --- | --- | --- | --- |
-| 検出器 | `det_500m.onnx` | InsightFace [`buffalo_sc` v0.7 release](https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_sc.zip)、SCRFD-500MF | 上流の事前学習モデル方針：非商用研究に限定。 |
-| 認識器 | `w600k_mbf.onnx` | InsightFace [`buffalo_sc` v0.7 release](https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_sc.zip)、MobileFaceNet | 上流の事前学習モデル方針：非商用研究に限定。 |
-
-ローカルに配置した `buffalo_sc.zip` の SHA-256 は次の値です。
-`57d31b56b6ffa911c8a73cfc1707c73cab76efe7f13b675a05223bf42de47c72`
-
-InsightFace のコードは MIT ですが、公開済みの事前学習モデルは MIT ではありません。上流 README は、手動・ライブラリ経由を問わずダウンロードした重みを非商用研究に限定しています。本プロジェクトの MIT は自作コードにのみ適用され、重みに関する権利は一切付与しません。別のモデルを使う場合は、`models/` に置く前に正確な利用条件を表へ追加してください。
+AdaFace's upstream MIT notice is retained as `selected/ADAFACE_LICENSE`. InsightFace code is MIT; its published pretrained weights are restricted to non-commercial research under the upstream model policy. The project's own MIT license does not change upstream weight terms.

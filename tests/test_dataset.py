@@ -63,6 +63,7 @@ def test_dataset_builder_preserves_raw_and_writes_auditable_metadata(tmp_path) -
         DummyDetector(),
         min_face_size=48,
         min_sharpness=20,
+        face_selections={"kana/001.jpg": [0]},
     )
     assert (accepted, rejected) == (1, 0)
     assert source.read_bytes() == before
@@ -70,6 +71,22 @@ def test_dataset_builder_preserves_raw_and_writes_auditable_metadata(tmp_path) -
     assert record["identity"] == "kana"
     assert record["face_index"] == 0
     assert (tmp_path / "aligned" / record["aligned_face_path"]).is_file()
+
+
+def test_single_face_source_requires_an_explicit_selection(tmp_path) -> None:
+    _write_source_image(tmp_path)
+    accepted, rejected = build_aligned_dataset(
+        tmp_path / "raw",
+        tmp_path / "aligned",
+        tmp_path / "rejected",
+        DummyDetector(),
+        min_face_size=48,
+        min_sharpness=20,
+    )
+
+    assert (accepted, rejected) == (0, 1)
+    record = json.loads((tmp_path / "rejected" / "metadata.jsonl").read_text().strip())
+    assert record["reasons"] == ["selection_required"]
 
 
 def test_multi_face_source_requires_an_explicit_selection(tmp_path) -> None:

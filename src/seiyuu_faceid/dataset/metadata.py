@@ -29,3 +29,29 @@ def read_jsonl(path: Path) -> list[dict[str, object]]:
             raise ValueError(f"Metadata line {number} in {path} is not an object.")
         records.append(value)
     return records
+
+
+def load_evaluation_identity_aliases(
+    path: Path, evaluation_root: Path, repository_root: Path
+) -> dict[str, str]:
+    """Load folder or per-face identity corrections bound to one evaluation root."""
+    if not path.is_file():
+        return {}
+    record = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(record, dict):
+        raise ValueError("Evaluation identity aliases must be a JSON object.")
+    declared_root = record.get("evaluation_root")
+    aliases = record.get("aliases")
+    if not isinstance(declared_root, str) or not isinstance(aliases, dict):
+        raise ValueError("Identity aliases need evaluation_root and an aliases mapping.")
+    if (repository_root / declared_root).resolve() != evaluation_root.resolve():
+        return {}
+    if any(
+        not isinstance(source, str)
+        or not isinstance(target, str)
+        or not source.strip()
+        or not target.strip()
+        for source, target in aliases.items()
+    ):
+        raise ValueError("Identity aliases must map non-empty labels to non-empty labels.")
+    return aliases

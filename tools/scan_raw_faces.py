@@ -36,9 +36,9 @@ def main() -> int:
     sources, records = scan_raw_detections(config.root / "data/raw", detector, progress=report)
     output_path = _bootstrap.ROOT / args.output
     save_detection_records(output_path, records)
-    group_photos = sum(1 for record in records.values() if len(record.detections) > 1)
+    reviewable = sum(1 for record in records.values() if record.detections)
     print(
-        f"Cached detections for {len(sources)} images; {group_photos} group photos need review: "
+        f"Cached detections for {len(sources)} images; {reviewable} images need review: "
         f"{output_path}"
     )
     return 0

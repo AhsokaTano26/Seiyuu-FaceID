@@ -1,6 +1,6 @@
 models:
   detector: models/det_500m.onnx
-  recognizer: models/w600k_mbf.onnx
+  classifier: models/selected
 
 detector:
   max_long_edge: 1920
@@ -14,20 +14,7 @@ quality:
 
 recognition:
   top_k: 5
-  # Retrieve more identities internally than are shown to the user.
-  candidate_search_top_k: 16
-  aggregation: prototype_score
-  verification_top_k: 3
-  # Calibrated on the independent data/gallery holdout (2026-08-19).
-  # Recalibrate whenever the model, enrolment data or identities change.
-  high_threshold: 0.45
-  low_threshold: 0.35
-
-gallery:
-  # Runtime artifacts deliberately live outside data/gallery/: that directory
-  # is a user-managed, independent labelled evaluation set.
-  path: data/runtime/gallery.npz
-  metadata_path: data/runtime/gallery.json
+  probability_threshold: 0.95
 
 runtime:
   intra_op_threads: 2

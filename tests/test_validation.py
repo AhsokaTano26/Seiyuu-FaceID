@@ -1,25 +1,21 @@
-from __future__ import annotations
-
 import numpy as np
+import pytest
 
-from seiyuu_faceid.validation import evaluate_identification, evaluate_pairs
-
-
-def test_pair_evaluation_reports_separated_scores() -> None:
-    left = np.array([[1, 0], [0, 1], [1, 0], [0, 1]], dtype=np.float32)
-    right = np.array([[1, 0], [0, 1], [0, 1], [1, 0]], dtype=np.float32)
-    report = evaluate_pairs(left, right, np.array([True, True, False, False]))
-    assert report["same_person"]["mean"] > report["different_person"]["mean"]
-    assert report["best_balanced_tar"] == 1.0
+from seiyuu_faceid.validation import classification_metrics
 
 
-def test_identification_evaluation_reports_accuracy_and_threshold_advice() -> None:
-    report = evaluate_identification(
-        ["a", "a", "b"],
-        [["a", "b"], ["b", "a"], ["b", "a"]],
-        np.array([0.92, 0.70, 0.81], dtype=np.float32),
+def test_metrics_include_supported_classes_with_no_correct_predictions():
+    metrics = classification_metrics(
+        np.array([0, 0, 1]), np.array([[0.8, 0.1, 0.1], [0.7, 0.2, 0.1], [0.6, 0.3, 0.1]])
     )
-    assert report["top1_accuracy"] == 2 / 3
-    assert report["top5_accuracy"] == 1.0
-    advice = report["threshold_advice"]
-    assert advice["high_threshold_no_observed_misidentification"] is not None
+    assert metrics["samples"] == 3
+    assert metrics["supported_classes"] == 2
+    assert metrics["top1_accuracy"] == pytest.approx(2 / 3)
+    assert metrics["macro_f1_supported_classes"] == pytest.approx(0.4)
+    assert metrics["balanced_accuracy"] == pytest.approx(0.5)
+    assert metrics["top5_accuracy"] == 1
+
+
+def test_metrics_reject_labels_outside_the_score_columns():
+    with pytest.raises(ValueError, match="labels"):
+        classification_metrics(np.array([2]), np.array([[0.5, 0.5]]))

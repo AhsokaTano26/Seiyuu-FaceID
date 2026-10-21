@@ -1,0 +1,13 @@
+# Build from an allowlist: private weights, photos, secrets and local venvs never enter the image.
+**
+!Dockerfile
+!pyproject.toml
+!uv.lock
+!README.md
+!LICENSE
+!src/
+!src/**
+!configs/
+!configs/default.yaml
+**/__pycache__/
+**/*.pyc

@@ -1,14 +1,11 @@
-# ローカルデータ構成
+# Local data
 
-[English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
+- `images/` at the repository root and `data/raw/`: original local photos; preserved.
+- `aligned/`: reviewed, aligned faces and metadata produced by sample preparation.
+- `training/`: the selected model's frozen 5,115 crops, trusted identity labels, source groups, train/validation/test indices and AdaFace + R50 features. Keep these for reproducibility.
+- `review/`: human face selections and content/label review records; character artwork and unlabeled photos remain distinct from real-person identity labels.
+- `gallery/`: original independent evaluation photos, retained as read-only source data. It is not a runtime model gallery.
+- `query/`: read-only batch classification inputs.
+- `runtime/detections.jsonl`: disposable face detection cache.
 
-- `raw/<identity>/`：ユーザーが用意した参照画像です。手動または Web UI で追加できますが、既存の元画像はツールで変更しません。
-- `aligned/`：採用された `112×112` の顔クロップと `metadata.jsonl` です。
-- `rejected/`：除外された画像・顔の理由を記録する JSONL です。
-- `gallery/<identity>/`：独立評価専用の、ラベル付きユーザー画像です。ビルドツールはこのディレクトリに書き込みません。
-- `runtime/`：本番用 embedding gallery、検出キャッシュ、評価レポートなど、再生成可能な出力です。
-- `query/`：任意の一括認識入力ディレクトリです。ここに置いた画像は照会専用で、Gallery に追加されません。
-- `cache/`：従来の破棄可能なキャッシュ場所です。新しい出力は `runtime/` を使用します。
-- `review/raw_faces/`：集合写真の手動レビュー用の番号付きプレビューと選択マニフェストです。
-
-これらのディレクトリは `.gitkeep` を除き、すべて Git の管理対象外です。
+Private images, labels and generated model/data artifacts are excluded from Git. Superseded model experiments and generated reports have been removed. Evaluation of the selected model is `uv run python tools/evaluate.py`; `--reextract` verifies the deployed ONNX backbones as well.
