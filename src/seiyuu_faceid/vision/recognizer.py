@@ -31,6 +31,8 @@ class ONNXRecognizer:
         intra_op_threads: int = 2,
         inter_op_threads: int = 1,
         color_order: str = "rgb",
+        allow_spinning: bool = True,
+        enable_cpu_mem_arena: bool = True,
     ):
         if color_order not in {"rgb", "bgr"}:
             raise ValueError("color_order must be rgb or bgr.")
@@ -44,6 +46,10 @@ class ONNXRecognizer:
         options = ort.SessionOptions()
         options.intra_op_num_threads = intra_op_threads
         options.inter_op_num_threads = inter_op_threads
+        spinning = "1" if allow_spinning else "0"
+        options.add_session_config_entry("session.intra_op.allow_spinning", spinning)
+        options.add_session_config_entry("session.inter_op.allow_spinning", spinning)
+        options.enable_cpu_mem_arena = enable_cpu_mem_arena
         self.session = ort.InferenceSession(
             str(model_path), sess_options=options, providers=["CPUExecutionProvider"]
         )

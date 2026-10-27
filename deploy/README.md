@@ -72,6 +72,15 @@ docker compose down
 417 MiB，不等于实际运行内存；多人脸图片会增加计算时间。
 现有权重支持 50 个已训练身份，迁移无需重新训练。
 
+N150 + 8 GB 的 Linux 主机可使用包内的省 CPU 配置（需包含对应代码的新镜像）：
+
+```bash
+docker compose -f compose.yaml -f compose.n150.yaml up -d --wait --wait-timeout 180
+```
+
+该配置保留原 FP32 模型、并行双骨干，每骨干一个线程并关闭线程自旋。
+实际延迟、CPU 与内存需要在目标机实测，操作方法见 [N150 指南](docs/N150.md)。
+
 配置和模型位于此目录下，备份整个目录即可迁移。部署包含本地模型，请按自己的
 访问范围保存；模型来源与使用范围见 `models/selected/MODEL_CARD.md` 和
 `manifest.json`。

@@ -23,6 +23,19 @@ class AppConfig:
     probability_threshold: float
     intra_op_threads: int
     inter_op_threads: int
+    parallel_backbones: bool = False
+    allow_spinning: bool = True
+    enable_cpu_mem_arena: bool = True
+    detector_intra_op_threads: int | None = None
+
+    @property
+    def effective_detector_threads(self) -> int:
+        """Use the detector override, or preserve the shared thread count."""
+        return (
+            self.intra_op_threads
+            if self.detector_intra_op_threads is None
+            else self.detector_intra_op_threads
+        )
 
 
 def load_config(path: Path) -> AppConfig:
@@ -56,6 +69,10 @@ def load_config(path: Path) -> AppConfig:
             probability_threshold=float(recognition.get("probability_threshold", 0.95)),
             intra_op_threads=int(runtime["intra_op_threads"]),
             inter_op_threads=int(runtime["inter_op_threads"]),
+            parallel_backbones=runtime.get("parallel_backbones", False),
+            allow_spinning=runtime.get("allow_spinning", True),
+            enable_cpu_mem_arena=runtime.get("enable_cpu_mem_arena", True),
+            detector_intra_op_threads=runtime.get("detector_intra_op_threads"),
         )
         _validate_config(config)
         return config
@@ -81,3 +98,15 @@ def _validate_config(config: AppConfig) -> None:
         raise ValueError("recognition.probability_threshold must be in [0, 1].")
     if config.intra_op_threads < 1 or config.inter_op_threads < 1:
         raise ValueError("runtime thread counts must be positive.")
+    detector_threads = config.detector_intra_op_threads
+    if detector_threads is not None and (
+        not isinstance(detector_threads, int)
+        or isinstance(detector_threads, bool)
+        or detector_threads < 1
+    ):
+        raise ValueError("runtime.detector_intra_op_threads must be a positive integer or null.")
+    if not isinstance(config.parallel_backbones, bool):
+        raise ValueError("runtime.parallel_backbones must be a boolean.")
+    for name in ("allow_spinning", "enable_cpu_mem_arena"):
+        if not isinstance(getattr(config, name), bool):
+            raise ValueError(f"runtime.{name} must be a boolean.")

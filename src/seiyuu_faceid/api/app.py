@@ -144,12 +144,16 @@ def create_app(
     async def lifespan(app: FastAPI):
         config = load_config(path)
         app.state.inference_lock = asyncio.Lock()
-        app.state.engine = await run_in_threadpool(engine_factory, config)
-        LOGGER.info("FaceID model loaded: %s", app.state.engine.classifier.model_id)
+        engine = await run_in_threadpool(engine_factory, config)
+        app.state.engine = engine
+        LOGGER.info("FaceID model loaded: %s", engine.classifier.model_id)
         try:
             yield
         finally:
-            app.state.engine = None
+            try:
+                await run_in_threadpool(engine.close)
+            finally:
+                app.state.engine = None
 
     app = FastAPI(
         title="Seiyuu FaceID API",

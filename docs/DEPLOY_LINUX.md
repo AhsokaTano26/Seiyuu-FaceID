@@ -1,5 +1,7 @@
 # 在 Linux 服务器完全独立部署
 
+无需 Docker 的安装与 systemd 服务配置见[原生 Linux 部署](DEPLOY_NATIVE_LINUX.md)。
+
 推荐继续使用 Python + FastAPI + ONNX Runtime，先部署 CPU 版本。识别完全在目标
 服务器上执行，不调用开发电脑或外部模型 API，不需要重新训练。运行所需内容为：
 
@@ -9,8 +11,15 @@
 
 目标主机预先安装 Docker Engine 和 Docker Compose v2。先按 2 核、4 GiB 内存准备
 测试环境；这不是已验证的最低配置，实际容量取决于目标 CPU、图片中人脸数量和
-并发量。程序默认使用 2 个推理线程、1 个 worker，当前实现只使用 CPU。
+并发量。随附配置为每个模型 2 个推理线程、1 个服务 worker，并启用两个识别骨干并行，
+识别阶段两个模型合计最多使用约 4 个计算线程。2 核或 CPU 配额较低的主机可设置
+`runtime.parallel_backbones: false`，或将 `runtime.intra_op_threads` 降为 1 后实测。
+本机并行测速不代表 Linux 目标机的吞吐量；详见[优化报告](CLASSIFIER_OPTIMIZATION.md)。当前实现只使用 CPU。
 即使服务器有 GPU，也不会自动启用 GPU 加速。
+
+目标为 **Intel N150 + 8 GB、Linux/Docker** 时，可使用新增的
+`configs/n150.yaml` 和 `compose.n150.yaml`。该预设减少线程开销并关闭 ORT 自旋，
+保持原 FP32 模型和识别规则；资源与延迟的取舍及目标机测速命令见 [N150 指南](N150.md)。
 
 ## 1. 通过 GitHub Actions 发布到 Docker Hub
 

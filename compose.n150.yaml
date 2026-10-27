@@ -1,0 +1,12 @@
+# Use together with compose.yaml. Replaces the bind at the same container target.
+services:
+  faceid:
+    environment:
+      OMP_NUM_THREADS: "1"
+    volumes:
+      - type: bind
+        source: ./configs/n150.yaml
+        target: /app/configs/default.yaml
+        read_only: true
+        bind:
+          create_host_path: false

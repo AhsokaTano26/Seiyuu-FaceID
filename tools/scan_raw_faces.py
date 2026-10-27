@@ -25,8 +25,10 @@ def main() -> int:
         score_threshold=config.detector_score_threshold,
         nms_threshold=config.detector_nms_threshold,
         max_long_edge=config.detector_max_long_edge,
-        intra_op_threads=config.intra_op_threads,
+        intra_op_threads=config.effective_detector_threads,
         inter_op_threads=config.inter_op_threads,
+        allow_spinning=config.allow_spinning,
+        enable_cpu_mem_arena=config.enable_cpu_mem_arena,
     )
 
     def report(number: int, total: int, source) -> None:

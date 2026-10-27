@@ -23,12 +23,19 @@ def create_bundle(root: Path, image_tar: Path | None, output: Path) -> None:
         raise FileExistsError(f"Refusing to overwrite deployment directory: {output}")
     files = {
         "compose.yaml": root / "compose.yaml",
+        "compose.n150.yaml": root / "compose.n150.yaml",
         ".env.example": root / "deploy/.env.example",
         "README.md": root / "deploy/README.md",
         "docs/API.md": root / "docs/API.md",
         "docs/DEPLOY_LINUX.md": root / "docs/DEPLOY_LINUX.md",
+        "docs/N150.md": root / "docs/N150.md",
+        "docs/DEPLOY_NATIVE_LINUX.md": root / "docs/DEPLOY_NATIVE_LINUX.md",
+        "docs/CLASSIFIER_OPTIMIZATION.md": root / "docs/CLASSIFIER_OPTIMIZATION.md",
+        "deploy/seiyuu-faceid.service": root / "deploy/seiyuu-faceid.service",
+        "deploy/faceid-native.env.example": root / "deploy/faceid-native.env.example",
         "LICENSE": root / "LICENSE",
         "configs/default.yaml": root / "configs/default.yaml",
+        "configs/n150.yaml": root / "configs/n150.yaml",
         "models/det_500m.onnx": root / "models/det_500m.onnx",
         "models/selected/manifest.json": root / "models/selected/manifest.json",
     }

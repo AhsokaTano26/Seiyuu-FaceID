@@ -47,6 +47,9 @@ def main() -> int:
                 config.classifier_bundle,
                 intra_op_threads=config.intra_op_threads,
                 inter_op_threads=config.inter_op_threads,
+                parallel_backbones=config.parallel_backbones,
+                allow_spinning=config.allow_spinning,
+                enable_cpu_mem_arena=config.enable_cpu_mem_arena,
             )
             features = []
             for index in test:

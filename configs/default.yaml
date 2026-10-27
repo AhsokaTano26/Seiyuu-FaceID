@@ -19,3 +19,4 @@ recognition:
 runtime:
   intra_op_threads: 2
   inter_op_threads: 1
+  parallel_backbones: true

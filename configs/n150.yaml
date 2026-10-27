@@ -1,0 +1,28 @@
+# Conservative CPU-work profile; measure on the actual N150 before tuning further.
+# Model weights, preprocessing and decision thresholds match default.yaml.
+models:
+  detector: models/det_500m.onnx
+  classifier: models/selected
+
+detector:
+  max_long_edge: 1920
+  input_size: [640, 640]
+  score_threshold: 0.50
+  nms_threshold: 0.40
+
+quality:
+  min_face_size: 48
+  min_sharpness: 20.0
+
+recognition:
+  top_k: 5
+  probability_threshold: 0.95
+
+runtime:
+  intra_op_threads: 1
+  # Preserve the detector's previous reduction order and aligned face pixels.
+  detector_intra_op_threads: 2
+  inter_op_threads: 1
+  parallel_backbones: true
+  allow_spinning: false
+  enable_cpu_mem_arena: true

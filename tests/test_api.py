@@ -38,6 +38,9 @@ class FixtureClassifier:
     class_names = ["alice", "bob"]
     model_id = "fixture-model"
 
+    def close(self):
+        pass
+
     def classify(self, aligned, *, top_k):
         return [Candidate("alice", 0.97), Candidate("bob", 0.03)][:top_k]
 
@@ -417,3 +420,36 @@ def test_openapi_documents_uploads_outputs_and_errors(client):
     assert "415" in operation["responses"]
     assert "422" in operation["responses"]
     assert operation["responses"]["200"]["content"]["application/json"]["schema"]
+
+
+def test_api_lifespan_closes_engine_and_clears_state():
+    engines = []
+
+    class ClosingEngine(FixtureEngine):
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    def factory(config):
+        engine = ClosingEngine(config)
+        engines.append(engine)
+        return engine
+
+    app = create_app(engine_factory=factory, api_key="")
+    with TestClient(app):
+        assert app.state.engine is engines[0]
+        assert not engines[0].closed
+    assert engines[0].closed
+    assert app.state.engine is None
+
+
+def test_api_clears_engine_state_even_if_close_fails():
+    class BrokenCloseEngine(FixtureEngine):
+        def close(self):
+            raise RuntimeError("close failed")
+
+    app = create_app(engine_factory=BrokenCloseEngine, api_key="")
+    with pytest.raises(RuntimeError, match="close failed"), TestClient(app):
+        assert app.state.engine is not None
+    assert app.state.engine is None

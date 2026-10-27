@@ -26,19 +26,28 @@ class FaceIdEngine:
             score_threshold=config.detector_score_threshold,
             nms_threshold=config.detector_nms_threshold,
             max_long_edge=config.detector_max_long_edge,
-            intra_op_threads=config.intra_op_threads,
+            intra_op_threads=config.effective_detector_threads,
             inter_op_threads=config.inter_op_threads,
+            allow_spinning=config.allow_spinning,
+            enable_cpu_mem_arena=config.enable_cpu_mem_arena,
         )
         self.classifier = IdentityClassifier(
             config.classifier_bundle,
             intra_op_threads=config.intra_op_threads,
             inter_op_threads=config.inter_op_threads,
+            parallel_backbones=config.parallel_backbones,
+            allow_spinning=config.allow_spinning,
+            enable_cpu_mem_arena=config.enable_cpu_mem_arena,
         )
         self.recognition_id = hashlib.sha256(
             (
                 self.classifier.model_id + json.dumps(asdict(config), sort_keys=True, default=str)
             ).encode()
         ).hexdigest()
+
+    def close(self) -> None:
+        """Release persistent classifier workers at application shutdown."""
+        self.classifier.close()
 
     def recognize_image(self, image_path: Path) -> list[FaceRecognition]:
         import cv2

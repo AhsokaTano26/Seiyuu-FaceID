@@ -38,6 +38,10 @@ Inputs undergo detection and five-point alignment. Unit AdaFace and R50 embeddin
 
 Original photos, reviewed labels and the frozen source-group split are preserved. `data/training/` contains 5,115 face crops, labels and features. The web sample preparation workflow does not retrain the model. Unclassified photos are unlabeled; character artwork is excluded from real-person training labels.
 
+The supplied configuration enables `runtime.parallel_backbones`: AdaFace and R50 run concurrently with two intra-op threads each. Set it to `false` for sequential execution on constrained hosts; older configurations without the option retain sequential behavior. The model and probability threshold are unchanged. See [accuracy comparisons and local latency measurements](docs/CLASSIFIER_OPTIMIZATION.md), and [training tools](training/README.md) for reproducible head search and benchmarking.
+
+For **N150 + 8 GB on Linux/Docker**, `configs/n150.yaml` and `compose.n150.yaml` provide a lower-CPU starting profile: one thread per backbone and ORT spinning disabled, retaining FP32 weights and recognition rules. Measure actual target latency before choosing settings. See the [N150 guide](docs/N150.md) for deployment and a benchmark that needs no training data.
+
 Reproduce the selected head without overwriting the deployed bundle:
 
 ```bash

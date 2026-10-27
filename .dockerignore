@@ -9,5 +9,9 @@
 !src/**
 !configs/
 !configs/default.yaml
+!configs/n150.yaml
+!tools/
+!tools/_bootstrap.py
+!tools/benchmark_target.py
 **/__pycache__/
 **/*.pyc

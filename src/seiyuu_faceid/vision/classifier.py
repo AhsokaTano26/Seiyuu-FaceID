@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from concurrent.futures import ThreadPoolExecutor, wait
 from pathlib import Path
+from threading import Lock
 
 import numpy as np
 
@@ -64,7 +66,14 @@ class IdentityClassifier:
     """Own the two frozen ONNX backbones and the locally trained identity head."""
 
     def __init__(
-        self, bundle: Path, *, intra_op_threads: int = 2, inter_op_threads: int = 1
+        self,
+        bundle: Path,
+        *,
+        intra_op_threads: int = 2,
+        inter_op_threads: int = 1,
+        parallel_backbones: bool = False,
+        allow_spinning: bool = True,
+        enable_cpu_mem_arena: bool = True,
     ) -> None:
         manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
         if (
@@ -85,15 +94,48 @@ class IdentityClassifier:
         self.model_id = hashlib.sha256(
             json.dumps(manifest["assets"], sort_keys=True).encode()
         ).hexdigest()
-        options = {"intra_op_threads": intra_op_threads, "inter_op_threads": inter_op_threads}
+        options = {
+            "intra_op_threads": intra_op_threads,
+            "inter_op_threads": inter_op_threads,
+            "allow_spinning": allow_spinning,
+            "enable_cpu_mem_arena": enable_cpu_mem_arena,
+        }
         self.adaface = ONNXRecognizer(bundle / "adaface_ir101.onnx", color_order="bgr", **options)
         self.r50 = ONNXRecognizer(bundle / "w600k_r50.onnx", **options)
+        self._lifecycle_lock = Lock()
+        self._closed = False
+        self._executor = ThreadPoolExecutor(max_workers=2) if parallel_backbones else None
 
     def embed(self, aligned_bgr: np.ndarray) -> np.ndarray:
         """Concatenate unit embeddings in the exact feature order used for training."""
-        return np.concatenate(
-            [self.adaface.embed(aligned_bgr), self.r50.embed(aligned_bgr)]
-        ) / np.float32(np.sqrt(2))
+        with self._lifecycle_lock:
+            if self._closed:
+                raise RuntimeError("Identity classifier is closed.")
+            futures = (
+                [
+                    self._executor.submit(recognizer.embed, aligned_bgr)
+                    for recognizer in (self.adaface, self.r50)
+                ]
+                if self._executor is not None
+                else None
+            )
+        if futures is not None:
+            # Drain both tasks even when one fails, before releasing the caller's image.
+            wait(futures)
+            embeddings = [future.result() for future in futures]
+        else:
+            embeddings = [self.adaface.embed(aligned_bgr), self.r50.embed(aligned_bgr)]
+        return np.concatenate(embeddings) / np.float32(np.sqrt(2))
+
+    def close(self) -> None:
+        """Stop worker threads once and reject subsequent recognition calls."""
+        with self._lifecycle_lock:
+            if self._closed:
+                return
+            self._closed = True
+            executor = self._executor
+        if executor is not None:
+            executor.shutdown(wait=True)
 
     def classify(self, aligned_bgr: np.ndarray, *, top_k: int) -> list[Candidate]:
         return self.head.candidates(self.embed(aligned_bgr), top_k=top_k)

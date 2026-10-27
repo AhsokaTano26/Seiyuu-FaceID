@@ -21,6 +21,8 @@ RUN apt-get update \
 WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
 COPY configs/default.yaml /app/configs/default.yaml
+COPY configs/n150.yaml /app/configs/n150.yaml
+COPY tools/_bootstrap.py tools/benchmark_target.py /app/tools/
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
