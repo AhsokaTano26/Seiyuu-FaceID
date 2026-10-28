@@ -5,6 +5,11 @@
 For standalone Linux deployment, including offline image and model transfer, see
 [the Linux deployment guide (中文)](docs/DEPLOY_LINUX.md).
 
+On main or version-tag pushes, CI delivers Docker Compose, Python/systemd and
+C++/Go/systemd deployment archives through Actions Artifacts, publishes images to
+Docker Hub, and publishes models separately to GitHub Releases. See the
+[CI/CD guide (中文)](docs/CI_CD.md) for downloads and validation.
+
 Local supervised classification of 50 identities using **AdaFace IR101 + InsightFace R50 + StandardScaler + logistic regression**. This is the only deployed model; both frozen backbones run through ONNX Runtime on CPU.
 
 ```bash

@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "url": "https://github.com/AhsokaTano26/Seiyuu-FaceID/releases/download/v0.1.0/seiyuu-faceid-v0.1.0-models.tar.gz",
+  "sha256": "c983f2cc8f5be687065b71d185759d78cf8326127df5517e40619d61192c82de",
+  "files": {
+    "models/MODEL_LICENSES.md": {
+      "sha256": "886c4d51d64050c3c454d06c1082a14a8c4857f6e618b6687a8f7a0462101229",
+      "size": 1135
+    },
+    "models/SHA256SUMS": {
+      "sha256": "2d11f775a829336278ed72f8bbde50ef54f0834068591ade38464843fc6690d1",
+      "size": 794
+    },
+    "models/TRAINING_SAMPLES.csv": {
+      "sha256": "5e8d620598c97203d194d51c17e2bda12e44f1e54897ea865ccb4483f9d57f7e",
+      "size": 845
+    },
+    "models/det_500m.onnx": {
+      "sha256": "5e4447f50245bbd7966bd6c0fa52938c61474a04ec7def48753668a9d8b4ea3a",
+      "size": 2524817
+    },
+    "models/selected/ADAFACE_LICENSE": {
+      "sha256": "95b6e493eb9dba27f2150304e790ae254bab18d1611f4d6e2ade28fa3a271583",
+      "size": 1067
+    },
+    "models/selected/MODEL_CARD.md": {
+      "sha256": "612654be8910d071d6383fe7c594efbedb846624ed0d1cbf5b67e90f53ccb035",
+      "size": 1198
+    },
+    "models/selected/adaface_ir101.onnx": {
+      "sha256": "9057d9c618b9fb721bb9417b615ddf39969c08a4c84c85f8189ca3faa95644ea",
+      "size": 260707739
+    },
+    "models/selected/classifier.npz": {
+      "sha256": "c9dcffea88abfb014bb62651412b3ce818cf0e6fa8c52c494caaebe5b08b45be",
+      "size": 207442
+    },
+    "models/selected/manifest.json": {
+      "sha256": "72cd30d76776501d1a25d28f02ad48488af696d3e5b0beb297c309dacc28b99c",
+      "size": 2011
+    },
+    "models/selected/w600k_r50.onnx": {
+      "sha256": "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43",
+      "size": 174383860
+    }
+  }
+}

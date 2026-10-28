@@ -66,6 +66,7 @@ data/experiments/
 
 # Local deployment bundles and server secrets.
 dist/
+native/build/
 .env
 .env.*
 !.env.example

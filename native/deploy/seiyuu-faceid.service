@@ -1,0 +1,33 @@
+[Unit]
+Description=Seiyuu FaceID native C++/Go inference
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+DynamicUser=yes
+EnvironmentFile=/etc/seiyuu-faceid/api.env
+Environment=ORT_DISABLE_TELEMETRY=1
+Environment=OMP_NUM_THREADS=1
+Environment=OPENBLAS_NUM_THREADS=1
+WorkingDirectory=/opt/seiyuu-faceid/current
+ExecStart=/opt/seiyuu-faceid/current/runtime/bin/faceid-server -model /opt/seiyuu-faceid/current/models/selected/native-model.json -addr 0.0.0.0:8000
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=100
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

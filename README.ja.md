@@ -5,6 +5,11 @@
 Linux サーバーへの独立デプロイとモデル・イメージのオフライン転送は
 [Linux デプロイ手順（中国語）](docs/DEPLOY_LINUX.md)を参照してください。
 
+main またはバージョンタグの push 後、CI は Docker Compose、Python/systemd、
+C++/Go/systemd の配布物を Actions Artifacts に作成し、イメージを Docker Hub、
+モデルを GitHub Releases に公開します。ダウンロード先と検証手順は
+[CI/CD ガイド（中国語）](docs/CI_CD.md)を参照してください。
+
 現在のモデルは **AdaFace IR101 + InsightFace R50 + 標準化 + ロジスティック回帰** に統一されています。50 人の既知クラスをローカルの ONNX Runtime で分類します。
 
 ```bash

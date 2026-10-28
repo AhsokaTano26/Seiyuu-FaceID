@@ -4,6 +4,8 @@
 
 使用本地声优照片训练的 50 类身份分类器。当前唯一模型是 **AdaFace IR101 + InsightFace R50 + 标准化 + 逻辑回归**，全部在本机通过 ONNX Runtime 推理。
 
+完整原理见 [识别技术框架详解](docs/TECHNICAL_ARCHITECTURE.md)：从检测、质量检查、五点对齐、双骨干特征融合到分类与复核，附训练评估、C++ / Go 架构和 N150 性能证据。
+
 ## 使用
 
 ```bash
@@ -30,13 +32,23 @@ curl --fail-with-body http://127.0.0.1:8000/v1/recognize -F 'file=@photo.jpg'
 GitHub Actions 在测试通过后发布到 `tano26/seiyuu-faceid`，需要仓库 Secret
 `DOCKERHUB_TOKEN`；本地训练权重单独迁移和挂载。
 
+CI/CD 在 main 或版本标签 push 后交付三种部署方式：Docker Compose、Python 原生、
+C++ / Go 原生。部署包在 Actions Artifacts，镜像在 Docker Hub，模型及训练样本数清单
+单独发布到 GitHub Releases。入口、检查及更新方式见 [CI/CD 文档](docs/CI_CD.md)。
+
 图片依次经过 SCRFD 检测、五点对齐和两个冻结骨干；将 AdaFace、R50 的单位特征按此顺序拼接并除以 √2，再交给已训练的分类头。候选分数为 50 个已知类别内的概率。默认接受阈值为 `0.95`，通过质量检查且最高类别概率达到阈值才返回身份；低概率或质量不足的人脸返回 `review`，保留候选供人工复核。未校准图库外身份或角色图拒识能力。
 
 随附配置已启用 `runtime.parallel_backbones`，两个骨干并行计算，每个骨干保持 2 个推理线程。资源受限的机器可设为 `false` 恢复顺序计算；旧配置缺少该项时仍采用顺序模式。模型权重和接受阈值不变。分类头对照实验与本机耗时见[优化报告](docs/CLASSIFIER_OPTIMIZATION.md)，复现命令见[训练说明](training/README.zh-CN.md)。
 
-**N150 + 8 GB、Linux/Docker** 可使用 `configs/n150.yaml` 配合 `compose.n150.yaml`，以每骨干一个线程和关闭自旋减少 CPU 工作量。原 FP32 权重和判定规则保留；目标机实际速度需实测。部署命令、资源对照与不依赖训练数据的测速工具见 [N150 指南](docs/N150.md)。
+**N150 + 8 GB、Linux/Docker** 可使用 `configs/n150.yaml` 配合 `compose.n150.yaml`，以每骨干一个线程和关闭自旋减少 CPU 工作量。原 FP32 权重和判定规则保留；已完成的 N150 三组基线显示，该预设相对旧线程配置减少约 34.4% CPU 时间，但平均 HTTP 耗时增加约 37.9%，不能作为低延迟优化。部署和测速工具见 [N150 指南](docs/N150.md)，统计口径与后续独立实验见 [N150 实机报告](docs/N150_BENCHMARK.md)。
 
 也可[原生部署为 Linux systemd 服务](docs/DEPLOY_NATIVE_LINUX.md)，使用相同模型和资源配置。
+
+N150 当前采用 [C++ 推理核心 + Go HTTP](docs/NATIVE_CPP_GO.md)，运行时无需 Python。针对次正规数处理的 FTZ/DAZ 优化已集成，导出时使用 `--flush-denormals` 开启；平均 HTTP 耗时约 **0.68 秒**，1,051 张历史留出裁剪仍为 **98.48%**。2026-10-28 已在目标机切换为 systemd 原生服务，沿用原 API 端口与密钥。部署及回退见 [原生运行指南](docs/NATIVE_CPP_GO.md#linux-systemd-部署)，实测口径见 [N150 报告](docs/N150_BENCHMARK.md)。长期与压力场景验收仍待完成。
+
+本机 M4 Pro 另用 LFW / WIDER FACE 共 756 张固定抽样完成公开数据对照：9,072 个计时请求，一致性检查全部通过；完整识别中 C++/Go 的平均耗时较 Python 减少约 1.8%–2.7%。输入、内存与准确率边界见 [标准数据集测试报告](docs/STANDARD_DATASET_BENCHMARK.md)。
+
+后续[完整准确率评测](docs/STANDARD_DATASET_ACCURACY.md)：LFW 全部 6,000 对十折验证为 **99.13%**；WIDER 全部 3,226 张验证图片在当前部署参数下的 Easy / Medium / Hard AP 为 **85.49 / 79.48 / 48.84**（×100）；原声优 1,051 张留出 Top-1 复测仍为 **98.48%**。Python 与 C++ 得分及判定一致，三个任务的指标分别解释。
 
 ## 当前成绩
 

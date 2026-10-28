@@ -1,0 +1,217 @@
+{
+  "schema_version": 1,
+  "classifier_sha256": "c9dcffea88abfb014bb62651412b3ce818cf0e6fa8c52c494caaebe5b08b45be",
+  "features_and_splits_sha256": "5f8bbb64773cd65d05dffff104067779c04a0a2b8e85604555dc5be3ebc89d92",
+  "fit_splits": [
+    "train",
+    "validation"
+  ],
+  "split_sizes": {
+    "train": 3574,
+    "validation": 490,
+    "test_excluded": 1051
+  },
+  "count_unit": "aligned_face_crop",
+  "identities": [
+    {
+      "name": "Raychell",
+      "training_samples": 6
+    },
+    {
+      "name": "上坂堇",
+      "training_samples": 296
+    },
+    {
+      "name": "中岛由貴",
+      "training_samples": 551
+    },
+    {
+      "name": "丰田萌绘",
+      "training_samples": 11
+    },
+    {
+      "name": "仓知玲凤",
+      "training_samples": 5
+    },
+    {
+      "name": "伊藤彩沙",
+      "training_samples": 272
+    },
+    {
+      "name": "伊藤美来",
+      "training_samples": 567
+    },
+    {
+      "name": "佐仓绫音",
+      "training_samples": 70
+    },
+    {
+      "name": "佐佐木李子",
+      "training_samples": 9
+    },
+    {
+      "name": "入江麻衣子",
+      "training_samples": 1
+    },
+    {
+      "name": "冈田梦以",
+      "training_samples": 23
+    },
+    {
+      "name": "前岛亚美",
+      "training_samples": 102
+    },
+    {
+      "name": "千春",
+      "training_samples": 4
+    },
+    {
+      "name": "反田叶月",
+      "training_samples": 86
+    },
+    {
+      "name": "吉田有里",
+      "training_samples": 24
+    },
+    {
+      "name": "土屋李央",
+      "training_samples": 25
+    },
+    {
+      "name": "大塚纱英",
+      "training_samples": 151
+    },
+    {
+      "name": "大桥彩香",
+      "training_samples": 99
+    },
+    {
+      "name": "大森莉绪",
+      "training_samples": 26
+    },
+    {
+      "name": "小原莉子",
+      "training_samples": 8
+    },
+    {
+      "name": "小日向美香",
+      "training_samples": 134
+    },
+    {
+      "name": "岛村绚沙",
+      "training_samples": 4
+    },
+    {
+      "name": "川口莉奈",
+      "training_samples": 6
+    },
+    {
+      "name": "工藤晴香",
+      "training_samples": 187
+    },
+    {
+      "name": "志崎桦音",
+      "training_samples": 110
+    },
+    {
+      "name": "明坂聪美",
+      "training_samples": 18
+    },
+    {
+      "name": "木户衣吹",
+      "training_samples": 25
+    },
+    {
+      "name": "木谷高明",
+      "training_samples": 6
+    },
+    {
+      "name": "朱李",
+      "training_samples": 6
+    },
+    {
+      "name": "松浦夏芽",
+      "training_samples": 4
+    },
+    {
+      "name": "林鼓子",
+      "training_samples": 27
+    },
+    {
+      "name": "樱川惠",
+      "training_samples": 52
+    },
+    {
+      "name": "樱田彩羽",
+      "training_samples": 1
+    },
+    {
+      "name": "渡濑结月",
+      "training_samples": 41
+    },
+    {
+      "name": "爱美",
+      "training_samples": 206
+    },
+    {
+      "name": "田所梓",
+      "training_samples": 9
+    },
+    {
+      "name": "直田姬奈",
+      "training_samples": 35
+    },
+    {
+      "name": "相羽爱奈",
+      "training_samples": 222
+    },
+    {
+      "name": "立石凛",
+      "training_samples": 14
+    },
+    {
+      "name": "米泽茜",
+      "training_samples": 14
+    },
+    {
+      "name": "纺木吏佐",
+      "training_samples": 37
+    },
+    {
+      "name": "羊宫妃那",
+      "training_samples": 16
+    },
+    {
+      "name": "花宫初奈",
+      "training_samples": 6
+    },
+    {
+      "name": "西尾夕香",
+      "training_samples": 17
+    },
+    {
+      "name": "西本里美",
+      "training_samples": 2
+    },
+    {
+      "name": "近藤天音",
+      "training_samples": 263
+    },
+    {
+      "name": "远藤祐里香",
+      "training_samples": 241
+    },
+    {
+      "name": "青木阳菜",
+      "training_samples": 20
+    },
+    {
+      "name": "高尾奏音",
+      "training_samples": 2
+    },
+    {
+      "name": "黑泽朋世",
+      "training_samples": 3
+    }
+  ]
+}

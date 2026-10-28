@@ -1,0 +1,128 @@
+{
+  "matplotlib": "3.10.9",
+  "numpy": "2.5.4",
+  "font_family_order": [
+    "Times New Roman",
+    "SimSun"
+  ],
+  "cjk_fallback": false,
+  "latin_fallback": false,
+  "aggregate_data_sha256": "f8cbb8c183191372dd3f294645e8b1c3874b3e2791168eee43fd5cd582882877",
+  "source_sha256": "ee2529694e672ff4891f7341f8e46775c4374d7a027c9b252de5065cab806605",
+  "figures": [
+    {
+      "name": "recognition_pipeline",
+      "group": "architecture",
+      "function": "draw_recognition_pipeline",
+      "text_fit_checked": true
+    },
+    {
+      "name": "scrfd_detector",
+      "group": "architecture",
+      "function": "draw_scrfd_detector",
+      "text_fit_checked": true
+    },
+    {
+      "name": "five_point_alignment",
+      "group": "architecture",
+      "function": "draw_five_point_alignment",
+      "text_fit_checked": true
+    },
+    {
+      "name": "feature_fusion",
+      "group": "architecture",
+      "function": "draw_feature_fusion",
+      "text_fit_checked": true
+    },
+    {
+      "name": "training_pipeline",
+      "group": "architecture",
+      "function": "draw_training_pipeline",
+      "text_fit_checked": true
+    },
+    {
+      "name": "data_split",
+      "group": "architecture",
+      "function": "draw_data_split",
+      "text_fit_checked": true
+    },
+    {
+      "name": "denormal_scope",
+      "group": "architecture",
+      "function": "draw_denormal_scope",
+      "text_fit_checked": true
+    },
+    {
+      "name": "native_runtime",
+      "group": "architecture",
+      "function": "draw_native_runtime",
+      "text_fit_checked": true
+    },
+    {
+      "name": "inference_parallel",
+      "group": "architecture",
+      "function": "draw_inference_parallel",
+      "text_fit_checked": true
+    },
+    {
+      "name": "request_lifecycle",
+      "group": "architecture",
+      "function": "draw_request_lifecycle",
+      "text_fit_checked": true
+    },
+    {
+      "name": "model_startup",
+      "group": "architecture",
+      "function": "draw_model_startup",
+      "text_fit_checked": true
+    },
+    {
+      "name": "benchmark_tasks",
+      "group": "accuracy",
+      "function": "draw_benchmark_tasks",
+      "text_fit_checked": true
+    },
+    {
+      "name": "lfw_protocol",
+      "group": "accuracy",
+      "function": "draw_lfw_protocol",
+      "text_fit_checked": true
+    },
+    {
+      "name": "lfw_errors",
+      "group": "accuracy",
+      "function": "draw_lfw_errors",
+      "text_fit_checked": true
+    },
+    {
+      "name": "lfw_fold_accuracy",
+      "group": "accuracy",
+      "function": "draw_lfw_fold_accuracy",
+      "text_fit_checked": true
+    },
+    {
+      "name": "wider_protocol",
+      "group": "accuracy",
+      "function": "draw_wider_protocol",
+      "text_fit_checked": true
+    },
+    {
+      "name": "wider_pr_curves",
+      "group": "accuracy",
+      "function": "draw_wider_pr_curves",
+      "text_fit_checked": true
+    },
+    {
+      "name": "holdout_decisions",
+      "group": "accuracy",
+      "function": "draw_holdout_decisions",
+      "text_fit_checked": true
+    },
+    {
+      "name": "validation_evidence",
+      "group": "accuracy",
+      "function": "draw_validation_evidence",
+      "text_fit_checked": true
+    }
+  ]
+}

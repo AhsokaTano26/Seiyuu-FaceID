@@ -1,4 +1,4 @@
-name: CI and Docker Hub
+name: CI, deployments and models
 
 on:
   push:
@@ -16,44 +16,195 @@ concurrency:
 
 jobs:
   quality:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.3.2
         with:
           python-version: "3.13"
           enable-cache: true
-      - name: Install locked dependencies
-        run: uv sync --locked --extra api --extra web --extra dev
-      - name: Check dependencies
-        run: uv pip check
-      - name: Lint
-        run: uv run ruff check .
-      - name: Test
-        run: uv run pytest
-      - name: Compile Python sources
-        run: uv run python -m compileall -q src tools app.py
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version: "1.26.x"
+          cache: false
+      - name: Validate workflow
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - run: uv sync --locked --extra api --extra web --extra dev
+      - run: uv pip check
+      - run: uv run ruff check .
+      - run: uv run pytest
+      - run: uv run python -m compileall -q src tools app.py
+
+  deployments:
+    name: Python and Docker deployment packages
+    needs: quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --locked --no-dev --extra api
+      - name: Validate pinned model and actual training counts
+        run: |
+          uv run --no-sync python tools/fetch_models.py
+          uv run --no-sync python -c 'from pathlib import Path; from tools.package_models import validate_training; validate_training(Path.cwd())'
+      - name: Build deployment archives
+        run: |
+          uv run --no-sync python tools/package_ci_deployments.py --kind python --revision "$GITHUB_SHA" --output dist/ci
+          uv run --no-sync python tools/package_ci_deployments.py --kind docker --revision "$GITHUB_SHA" --output dist/ci
+      - name: Smoke test relocated Python package
+        run: |
+          stage="$RUNNER_TEMP/python-deployment"
+          mkdir -p "$stage"
+          tar -xzf "dist/ci/seiyuu-faceid-python-$GITHUB_SHA.tar.gz" -C "$stage"
+          cp -a models "$stage/models"
+          (cd "$stage" && sha256sum --check SHA256SUMS)
+          uv run --no-sync python tools/smoke_deployment.py --kind python --root "$stage" --log dist/python-smoke.log
+      - name: Validate Compose profiles
+        env:
+          SEIYUU_FACEID_API_KEY: ci-config-validation-key
+        run: |
+          stage="$RUNNER_TEMP/docker-deployment"
+          mkdir -p "$stage"
+          tar -xzf "dist/ci/seiyuu-faceid-docker-$GITHUB_SHA.tar.gz" -C "$stage"
+          cp -a models "$stage/models"
+          (cd "$stage" && sha256sum --check SHA256SUMS)
+          docker compose --project-directory "$stage" -f "$stage/compose.yaml" config --quiet
+          docker compose --project-directory "$stage" -f "$stage/compose.yaml" -f "$stage/compose.n150.yaml" config --quiet
+      - name: Upload Python deployment
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: seiyuu-faceid-python-${{ github.sha }}
+          path: |
+            dist/ci/seiyuu-faceid-python-*.tar.gz
+            dist/ci/seiyuu-faceid-python-*.tar.gz.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - name: Upload Docker Compose deployment
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: seiyuu-faceid-docker-${{ github.sha }}
+          path: |
+            dist/ci/seiyuu-faceid-docker-*.tar.gz
+            dist/ci/seiyuu-faceid-docker-*.tar.gz.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  native:
+    name: Linux amd64 C++ and Go runtime
+    needs: quality
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version: "1.26.x"
+          cache: false
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake curl ca-certificates libgl1 libglib2.0-0 libgomp1
+      - name: Cache verified dependencies
+        id: native-deps
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            dist/native-deps/downloads
+            dist/native-deps/opencv
+          key: native-ubuntu22-amd64-v1-${{ hashFiles('native/build.sh') }}
+      - name: Build and run CTest and Go suites
+        env:
+          DEPS_CACHED: ${{ steps.native-deps.outputs.cache-hit }}
+          JOBS: "2"
+        run: |
+          if [ "$DEPS_CACHED" = "true" ]; then
+            bash native/build.sh --app-only
+          else
+            bash native/build.sh
+          fi
+      - name: Prepare exact model configurations
+        run: |
+          uv sync --locked --no-dev --extra api
+          uv run --no-sync python tools/fetch_models.py
+          uv run --no-sync python tools/export_native_model.py --config configs/n150.yaml
+          uv run --no-sync python tools/export_native_model.py --config configs/n150.yaml --flush-denormals --output models/selected/native-n150.json
+      - name: Check FP32 features and decisions against Python
+        run: |
+          uv run --no-sync python - <<'PY'
+          from pathlib import Path
+          import cv2
+          import numpy as np
+          folder = Path("dist/ci-crops")
+          folder.mkdir()
+          rng = np.random.default_rng(20261028)
+          for i in range(4):
+              if not cv2.imwrite(str(folder / f"{i}.png"), rng.integers(0, 256, (112, 112, 3), dtype=np.uint8)):
+                  raise RuntimeError("Could not write synthetic crop")
+          PY
+          uv run --no-sync python tools/validate_native.py --library dist/native-runtime/lib/libfaceid_core.so --model models/selected/native-n150.json --config configs/n150.yaml --crop-dir dist/ci-crops --samples 4 --output dist/native-smoke-parity.json
+      - name: Package and smoke test relocated runtime
+        run: |
+          uv run --no-sync python tools/package_ci_deployments.py --kind native --revision "$GITHUB_SHA" --runtime dist/native-runtime --output dist/ci
+          stage="$RUNNER_TEMP/native-deployment"
+          mkdir -p "$stage"
+          tar -xzf "dist/ci/seiyuu-faceid-native-linux-amd64-$GITHUB_SHA.tar.gz" -C "$stage"
+          (cd "$stage" && sha256sum --check SHA256SUMS)
+          cp -an models/. "$stage/models/"
+          uv run --no-sync python tools/smoke_deployment.py --kind native --root "$stage" --log dist/native-smoke.log
+      - name: Upload Linux amd64 native deployment
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: seiyuu-faceid-native-linux-amd64-${{ github.sha }}
+          path: |
+            dist/ci/seiyuu-faceid-native-linux-amd64-*.tar.gz
+            dist/ci/seiyuu-faceid-native-linux-amd64-*.tar.gz.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
 
   docker:
     name: Publish Docker Hub image
-    needs: quality
-    if: github.event_name != 'pull_request' && github.repository == 'AhsokaTano26/Seiyuu-FaceID'
-    runs-on: ubuntu-latest
+    needs: [quality, deployments]
+    if: >-
+      github.event_name != 'pull_request' &&
+      github.repository == 'AhsokaTano26/Seiyuu-FaceID' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
       - name: Check publishing credentials
         env:
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           if [ -z "$DOCKERHUB_TOKEN" ]; then
-            echo "::error::Configure the DOCKERHUB_TOKEN repository secret with push access to tano26/seiyuu-faceid."
+            echo "::error::Configure DOCKERHUB_TOKEN with push access to tano26/seiyuu-faceid."
             exit 1
           fi
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
       - name: Docker image metadata
         id: meta
         uses: docker/metadata-action@v6
@@ -64,8 +215,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
             type=sha,format=long
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v4
+      - uses: docker/login-action@v4
         with:
           username: tano26
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -79,3 +229,36 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=faceid
           cache-to: type=gha,mode=max,scope=faceid
+
+  models:
+    name: Publish model-only Release
+    needs: [quality, deployments, native, docker]
+    if: >-
+      github.event_name != 'pull_request' &&
+      github.repository == 'AhsokaTano26/Seiyuu-FaceID' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    concurrency:
+      group: model-release-${{ github.repository }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - name: Prepare model allowlist and verified sample counts
+        run: |
+          uv sync --locked --no-dev
+          uv run --no-sync python tools/fetch_models.py
+          uv run --no-sync python tools/package_models.py --output dist/model-release --notes dist/model-notes.md --metadata dist/model-release.json
+      - name: Publish or verify existing model Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          uv run --no-sync python tools/publish_models.py --directory dist/model-release --metadata dist/model-release.json --notes dist/model-notes.md --revision "$GITHUB_SHA"
