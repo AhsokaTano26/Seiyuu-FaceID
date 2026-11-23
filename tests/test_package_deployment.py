@@ -37,6 +37,16 @@ def workspace(tmp_path):
         "models/selected/holdout_scores.npz": b"private evaluation",
         ".env": b"SEIYUU_FACEID_API_KEY=private-secret",
     }
+    documents = [name for name in assets if name.startswith("docs/")]
+    documents.append("deploy/README.md")
+    for name in documents:
+        for suffix in (".zh-CN", ".ja"):
+            assets[name.removesuffix(".md") + suffix + ".md"] = assets[name]
+    for suffix in ("", ".zh-CN", ".ja"):
+        assets[f"deploy/README{suffix}.md"] = (
+            f"[API](../docs/API{suffix}.md)\n"
+            "[English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)\n"
+        ).encode()
     for name, content in assets.items():
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -58,7 +68,7 @@ def test_bundle_is_complete_and_excludes_private_workspace(workspace):
     root, image, output = workspace
     create_bundle(root, image, output)
     names = {path.relative_to(output).as_posix() for path in output.rglob("*") if path.is_file()}
-    assert names == {
+    expected = {
         "image.tar", "compose.yaml", "compose.n150.yaml", ".env.example", "README.md", "LICENSE",
         "SHA256SUMS", "docs/API.md", "docs/DEPLOY_LINUX.md", "docs/N150.md",
         "docs/DEPLOY_NATIVE_LINUX.md", "deploy/seiyuu-faceid.service",
@@ -69,6 +79,13 @@ def test_bundle_is_complete_and_excludes_private_workspace(workspace):
         "models/selected/adaface_ir101.onnx", "models/selected/w600k_r50.onnx",
         "models/selected/ADAFACE_LICENSE", "models/selected/MODEL_CARD.md",
     }
+    documents = [name for name in expected if name.startswith("docs/") and name.endswith(".md")]
+    documents.append("README.md")
+    for name in documents:
+        expected.update(name.removesuffix(".md") + suffix + ".md" for suffix in (".zh-CN", ".ja"))
+    assert names == expected
+    for suffix in ("", ".zh-CN", ".ja"):
+        assert f"](docs/API{suffix}.md)" in (output / f"README{suffix}.md").read_text()
     assert (output / "image.tar").read_bytes() == b"prebuilt Linux image"
     assert (output / "models/det_500m.onnx").read_bytes() == b"detector"
     for line in (output / "SHA256SUMS").read_text().splitlines():

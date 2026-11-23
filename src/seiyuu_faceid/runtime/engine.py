@@ -68,8 +68,12 @@ class FaceIdEngine:
             probability_threshold=self.config.probability_threshold,
         )
 
-    def detect_array(self, image_bgr: np.ndarray) -> list[FaceDetection]:
-        return self.detector.detect(image_bgr)
+    def detect_array(
+        self, image_bgr: np.ndarray, *, score_threshold: float | None = None
+    ) -> list[FaceDetection]:
+        if score_threshold is None:
+            return self.detector.detect(image_bgr)
+        return self.detector.detect(image_bgr, score_threshold=score_threshold)
 
     def recognize_detection(
         self, image_bgr: np.ndarray, detection: FaceDetection

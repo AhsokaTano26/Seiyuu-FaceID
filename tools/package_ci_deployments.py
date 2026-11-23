@@ -11,10 +11,10 @@ import tempfile
 from pathlib import Path
 
 if __package__:
-    from tools._artifacts import archive_tree, write_checksums
+    from tools._artifacts import archive_tree, resolve_documentation_links, write_checksums
     from tools.fetch_models import load_source, sha256
 else:
-    from _artifacts import archive_tree, write_checksums
+    from _artifacts import archive_tree, resolve_documentation_links, write_checksums
     from fetch_models import load_source, sha256
 
 COMMON = (
@@ -23,6 +23,8 @@ COMMON = (
     "release/model-source.json",
     "release/training.json",
     "docs/API.md",
+    "docs/API.zh-CN.md",
+    "docs/API.ja.md",
 )
 PROFILES = ("configs/default.yaml", "configs/n150.yaml")
 
@@ -121,7 +123,14 @@ def package_ci_bundle(
     with tempfile.TemporaryDirectory(prefix=".ci-bundle-", dir=output) as tmp:
         stage = Path(tmp)
         copy_files(root, stage, COMMON)
-        shutil.copyfile(root / f"deploy/ci/{kind}.md", stage / "README.md")
+        for suffix in ("", ".zh-CN", ".ja"):
+            document = (root / f"deploy/ci/{kind}{suffix}.md").read_text("utf-8")
+            for language in ("", ".zh-CN", ".ja"):
+                document = document.replace(
+                    f"]({kind}{language}.md)", f"](README{language}.md)"
+                )
+            document = document.replace("](../../docs/", "](docs/")
+            (stage / f"README{suffix}.md").write_text(document, encoding="utf-8")
         (stage / "BUILD.json").write_text(
             json.dumps(
                 {
@@ -168,6 +177,10 @@ def package_ci_bundle(
             if runtime is None:
                 raise ValueError("A freshly built Linux runtime is required.")
             copy_native(root, stage, runtime, native_models or root / "models/selected")
+        resolve_documentation_links(
+            stage, sorted(stage.glob("README*.md")) + sorted((stage / "docs").glob("*.md")),
+            revision,
+        )
         write_checksums(stage)
         archive_tree(stage, archive)
     archive.with_name(archive.name + ".sha256").write_text(

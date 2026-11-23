@@ -1,0 +1,71 @@
+{
+  "reviewed_at": "2026-11-03T01:09:57.664483+00:00",
+  "status": "passed",
+  "primary_model_tag": "models-5cc19e9d5b1a30aa",
+  "historical_model_tag": "models-ca1a34fb7a63a38f",
+  "report_sha256": "bdaaf1b79189044bc4490b8d66653337671ee36b0448d493515f52380ab9efc5",
+  "numeric_recalculation": "passed",
+  "version_and_classifier_bindings": "passed",
+  "different_holdout_warning": "present in report and comparison figure",
+  "fonts": {
+    "latin": {
+      "family": "Times New Roman",
+      "file": "Times New Roman.ttf"
+    },
+    "chinese": {
+      "family": "SimSun",
+      "file": "simsun.ttc"
+    }
+  },
+  "font_fallback_used": false,
+  "figures": {
+    "model_version_metrics": {
+      "png_pixels": [
+        2550,
+        1379
+      ],
+      "png_dpi": 400,
+      "png_color_review": "passed",
+      "pdf_render_review": "passed",
+      "grayscale_review": "passed",
+      "pdf_embedded_fonts": [
+        "Times New Roman",
+        "SimSun"
+      ],
+      "clipping_or_overlap": "none observed"
+    },
+    "model606_threshold_outcomes": {
+      "png_pixels": [
+        2436,
+        1834
+      ],
+      "png_dpi": 400,
+      "png_color_review": "passed",
+      "pdf_render_review": "passed",
+      "grayscale_review": "passed",
+      "pdf_embedded_fonts": [
+        "Times New Roman",
+        "SimSun"
+      ],
+      "clipping_or_overlap": "none observed"
+    },
+    "model606_sample_support": {
+      "png_pixels": [
+        2457,
+        1666
+      ],
+      "png_dpi": 400,
+      "png_color_review": "passed",
+      "pdf_render_review": "passed",
+      "grayscale_review": "passed",
+      "pdf_embedded_fonts": [
+        "Times New Roman",
+        "SimSun"
+      ],
+      "clipping_or_overlap": "none observed"
+    }
+  },
+  "markdown_local_links_checked": 15,
+  "markdown_integration": "local image/file links verified; plots inspected individually",
+  "unresolved_issues": []
+}

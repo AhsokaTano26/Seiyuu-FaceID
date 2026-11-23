@@ -1,20 +1,24 @@
-# 三种部署方式与模型发布实施计划
+# Implementation plan for three deployments and model delivery
 
-**目标：** 在 main push、版本标签 push 及 main 手动运行后，交付 Docker、Python 原生、C++/Go 原生三种部署方式，并自动发布经过校验的模型。
+[English](2026-10-28-ci-deployments.md) | [简体中文](2026-10-28-ci-deployments.zh-CN.md) | [日本語](2026-10-28-ci-deployments.ja.md)
 
-**实现：** 沿用现有 Docker Hub 多架构镜像。两种原生部署包和 Compose 部署包放 Actions Artifacts；GitHub Release 只发布模型和必要元信息。模型从版本控制中固定 URL 和 SHA-256 的既有模型发布取得，CI 不训练、不接触私人照片或特征。
+This record describes the 2026-10-28 implementation.
 
-**约束：** 不 push，不触发线上发布，不修改现有服务器；不覆盖历史 Release。模型说明列出全部内置身份和实际拟合样本数（训练加验证，排除测试）。现有模型、阈值及推理代码保持不变。部署包不重复携带 ONNX 权重，通过固定校验的下载工具获取同一模型。
+The goal is to deliver Docker, Python native and C++/Go native deployments after main pushes, version-tag pushes and manual main runs, then publish validated models.
 
-- [x] 模型交付：先添加失败测试；实现安全下载、白名单解包、校验、训练统计导出、可复现模型打包及模型说明生成。用本地冻结数据核实 50 类／4,064 张统计。
-- [x] 部署产物：生成 Python、Docker、Linux amd64 C++/Go 三种独立部署包，附校验、固定模型来源和操作说明；原生包保留共享库、许可证及 FTZ/兼容两种 JSON。
-- [x] 工作流：保留 Python 质量检查和 Docker Hub 发布；添加 Linux 原生构建与模型启动/请求检查、三种产物上传；所有交付成功后才发布模型。按模型内容生成稳定标签，重复 push 校验后复用；使用草稿上传，避免公开不完整模型。
-- [x] 验证：运行全部 Python 测试、Go/原生构建检查、工作流静态检查；从干净目录实测模型获取和 Python/Compose 打包，原生打包在隔离 ELF/JSON fixture 上检查。文档说明平台范围、下载入口和首次云端执行边界。
+The design reuses Docker Hub multi-architecture images. Native and Compose archives are stored in Actions Artifacts. GitHub Releases contain models and required metadata. CI reads a version-controlled model URL and SHA-256 and uses public artifacts for installation.
 
-选择上述安排是为了遵守 AGENTS.md 的模型 Release 约定，同时避免每种部署包重复存放约 400 MB 模型。模型更新时更新固定来源与已核实的训练统计；普通应用 push 复用相同模型发布。
+At the planned stage, push, live deployment, historic Release overwrite and changes to models, thresholds or inference were outside the authorized work. Model notes list all built-in identities and actual train + validation counts, excluding test. Deployment archives fetch the pinned model separately.
 
-验证记录：本地 235 项 Python 测试通过；无私有模型／训练数据的干净文件树中 232 通过、3 跳过；actionlint、Ruff、Compose 两套配置校验通过。真实模型归档按白名单下载输入安装、重新打包并逐文件核对；解压 Python 包实际启动，首页、鉴权、模型标识及推理接口通过。3 项本地 CTest 与两套 Go 测试通过；Mac 重复安装已有运行库打印既有 rpath 重写诊断，脚本最终退出 0，未修改推理或构建代码。独立审查发现的首页资源、草稿查询、失败上传占位与系统库说明问题已增加回归检查／修复并复核通过。
+- [x] Model delivery began with failing tests, followed by safe download, allowlisted extraction, checksums, training-count export, reproducible packaging and release-note generation. Frozen local data verified 50 classes and 4,064 fit rows.
+- [x] Deployment artifacts include separate Python, Docker and Linux amd64 C++/Go archives, checksums, pinned sources and instructions. Native artifacts retain shared libraries, licenses and FTZ/compatible JSON.
+- [x] Workflow preserves Python quality and Docker Hub jobs, adding native Linux builds, startup/request checks and artifact uploads. Publish model-only Releases after all deliveries succeed. Content-derived tags permit verified reuse. Draft uploads prevent partial public Releases and support recovery of interrupted placeholder uploads.
+- [x] Verification covers Python tests, native/Go builds, workflow lint, model fetch from a clean directory, Python/Compose packaging and isolated ELF/JSON fixtures. Documentation states platform support, downloads and first cloud-run boundaries.
 
-本机 Docker daemon 未运行，因此没有重建或运行新容器。配置完成时按用户当时不要 push 的要求保留本地改动；后续已获得明确的 commit、push 与云端验证授权，执行结果以对应提交的 Actions 记录为准。
+The design follows AGENTS.md and fetches approximately 400 MB of weights separately from each deployment archive. Weight changes update pinned sources and verified counts. Application-only pushes reuse a matching model Release.
 
-提交前清理了生成 SVG 的行尾空格、文档末尾多余空行，以及绘图脚本公式字符串的转义警告。19 幅图已用同一绘图函数重新生成，来源摘要同步更新；Python 编译检查退出 0。
+Local verification recorded 235 Python passes. A clean tree without private models/data had 232 passes and 3 skips. Actionlint, Ruff and both Compose profiles passed. The model archive was downloaded under an allowlist, repackaged and compared file-by-file. A relocated Python package served its homepage, authentication, model metadata and inference correctly. Three CTest cases and both Go suites passed. Mac reinstall logged existing rpath rewrite diagnostics and exited 0. Inference/build code was retained. Independent review found and fixed homepage resources, draft lookup, interrupted upload placeholders and system-library wording, with regression checks.
+
+Local Docker daemon was stopped, so new-container runtime validation was unavailable. Changes initially stayed local under the user's no-push instruction. Later authorization allowed commit, push and cloud verification. Results are recorded in the relevant Actions runs.
+
+Before commit, trailing SVG whitespace, excess final blank lines and formula escape warnings were cleaned. Nineteen figures were regenerated through the same functions and source digests updated. Python compile verification exited 0.

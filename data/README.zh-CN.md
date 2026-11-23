@@ -1,11 +1,20 @@
-# Local data
+# 本地数据
 
-- `images/` at the repository root and `data/raw/`: original local photos; preserved.
-- `aligned/`: reviewed, aligned faces and metadata produced by sample preparation.
-- `training/`: the selected model's frozen 5,115 crops, trusted identity labels, source groups, train/validation/test indices and AdaFace + R50 features. Keep these for reproducibility.
-- `review/`: human face selections and content/label review records; character artwork and unlabeled photos remain distinct from real-person identity labels.
-- `gallery/`: original independent evaluation photos, retained as read-only source data. It is not a runtime model gallery.
-- `query/`: read-only batch classification inputs.
-- `runtime/detections.jsonl`: disposable face detection cache.
+[English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
-Private images, labels and generated model/data artifacts are excluded from Git. Superseded model experiments and generated reports have been removed. Evaluation of the selected model is `uv run python tools/evaluate.py`; `--reextract` verifies the deployed ONNX backbones as well.
+下列路径说明数据工作流。私人文件由 Git 忽略，克隆仓库后可能缺失。
+
+- `../images/` 与 `raw/` 存放本地原始照片。
+- `aligned/` 存放已审核、已对齐人脸与准备阶段元数据。
+- `training/` 存放历史50身份模型的冻结标签、来源组、训练/验证/测试索引与 AdaFace + R50 特征。
+- `review/` 存放人工选脸、内容与标签审核记录。角色图和未标注照片各自保留审核状态。
+- `gallery/` 存放来源评测照片。
+- `query/` 存放批量分类的只读输入。
+- `runtime/detections.jsonl` 是可重建的检测缓存。
+- `experiments/` 存放本地实验，包括独立的606身份训练产物。
+
+未分类照片保留无标签状态，角色图排除在真人身份训练样本之外。
+
+历史数据池有5,115条人脸记录，训练/验证/测试划分为3,574/490/1,051条，最终分类头使用4,064条拟合。606身份实验使用独立的数据与分类头，见[模型报告](../docs/MODEL_ACCURACY_20261103.zh-CN.md)。
+
+`uv run python tools/evaluate.py` 使用保留特征评估历史默认分类头。`--reextract` 还需要原有对齐裁剪。本地清理已经移除了历史照片和裁剪，重新提取前应检查所需文件。准备新模型时参考[训练说明](../training/README.zh-CN.md)。

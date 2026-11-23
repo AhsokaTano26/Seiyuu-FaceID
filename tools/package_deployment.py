@@ -7,6 +7,11 @@ import shutil
 import tempfile
 from pathlib import Path
 
+if __package__:
+    from tools._artifacts import resolve_documentation_links
+else:
+    from _artifacts import resolve_documentation_links
+
 ROOT = Path(__file__).resolve().parents[1]
 MODEL_FILES = ("adaface_ir101.onnx", "w600k_r50.onnx", "classifier.npz")
 
@@ -39,6 +44,15 @@ def create_bundle(root: Path, image_tar: Path | None, output: Path) -> None:
         "models/det_500m.onnx": root / "models/det_500m.onnx",
         "models/selected/manifest.json": root / "models/selected/manifest.json",
     }
+    documents = [
+        (name, source) for name, source in files.items()
+        if name.endswith(".md") and (name == "README.md" or name.startswith("docs/"))
+    ]
+    for name, source in documents:
+        for suffix in (".zh-CN", ".ja"):
+            files[name.removesuffix(".md") + suffix + ".md"] = source.with_name(
+                source.stem + suffix + ".md"
+            )
     if image_tar is not None:
         files["image.tar"] = image_tar.resolve()
     for name in (*MODEL_FILES, "MODEL_CARD.md", "ADAFACE_LICENSE"):
@@ -55,7 +69,15 @@ def create_bundle(root: Path, image_tar: Path | None, output: Path) -> None:
             target = stage / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, target)
+            if name in ("README.md", "README.zh-CN.md", "README.ja.md"):
+                target.write_text(
+                    target.read_text("utf-8").replace("](../docs/", "](docs/"), encoding="utf-8"
+                )
             target.chmod(0o644)
+        resolve_documentation_links(
+            stage, sorted(stage.glob("README*.md")) + sorted((stage / "docs").glob("*.md")),
+            "main",
+        )
         manifest = json.loads((stage / "models/selected/manifest.json").read_text("utf-8"))
         expected = {f"models/selected/{name}": manifest["assets"][name] for name in MODEL_FILES}
         expected["models/det_500m.onnx"] = manifest["detector"]["sha256"]

@@ -2,55 +2,73 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
-For standalone Linux deployment, including offline image and model transfer, see
-[the Linux deployment guide (中文)](docs/DEPLOY_LINUX.md).
+Local face detection and supervised identity classification using **SCRFD + AdaFace IR101 + InsightFace R50 + StandardScaler + logistic regression**. Inference runs on CPU through ONNX Runtime.
 
-On main or version-tag pushes, CI delivers Docker Compose, Python/systemd and
-C++/Go/systemd deployment archives through Actions Artifacts, publishes images to
-Docker Hub, and publishes models separately to GitHub Releases. See the
-[CI/CD guide (中文)](docs/CI_CD.md) for downloads and validation.
+## Model versions
 
-Local supervised classification of 50 identities using **AdaFace IR101 + InsightFace R50 + StandardScaler + logistic regression**. This is the only deployed model; both frozen backbones run through ONNX Runtime on CPU.
+| Bundle | Identities | Actual fit faces | Holdout faces | Top-1 |
+| --- | ---: | ---: | ---: | ---: |
+| Default local `models/selected/` and pinned CI source | 50 | 4,064 | 1,051 | 98.48% (1,035/1,051) |
+| Published `models-5cc19e9d5b1a30aa` | 606 | 49,858 | 8,759 | 99.38% (8,705/8,759) |
+
+These versions have different datasets and evaluation histories. The 50-identity head was selected after repeated comparisons on its historical holdout. The 606-identity truth labels come from folders and have not been individually verified. Read the corresponding [606-identity report](docs/MODEL_ACCURACY_20261103.md) and [historical optimization report](docs/CLASSIFIER_OPTIMIZATION.md). Check model identity through `GET /v1/model` and the classifier checksum.
+
+## Run locally
 
 ```bash
 uv sync --locked --extra api --extra web --extra dev
 uv run streamlit run app.py
 uv run python tools/recognize.py path/to/photo.jpg
 uv run python tools/batch_recognize.py path/to/photos
+uv run uvicorn seiyuu_faceid.api.app:create_app --factory --host 127.0.0.1 --port 8000
+```
+
+Install the complete bundle in `models/selected/` and the detector at `models/det_500m.onnx`. Weights and private datasets are excluded from Git. Runtime settings come from `configs/default.yaml`. API and web dependencies are optional extras. Model sources and upstream terms are documented in the [model guide](models/README.md).
+
+## HTTP API
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/health`, `/ready` | Process and model health |
+| GET | `/v1/model` | Loaded model, identities and defaults |
+| POST | `/api/v1/detect` | Internal face-presence detection, boxes and confidence |
+| POST | `/v1/detect` | Detection boxes, scores and five landmarks |
+| POST | `/v1/recognize` | Single-image identity classification |
+| POST | `/v1/recognize/batch` | Ordered batch classification |
+
+```bash
+curl --fail-with-body 'http://127.0.0.1:8000/api/v1/detect?score_threshold=0.7'   -H "Authorization: Bearer $SEIYUU_FACEID_API_KEY" -F 'file=@photo.jpg'
+curl --fail-with-body http://127.0.0.1:8000/v1/recognize   -H "Authorization: Bearer $SEIYUU_FACEID_API_KEY" -F 'file=@photo.jpg'
+```
+
+The internal detection endpoint reuses the loaded detector and returns `has_face`, `face_count` and `faces`. Its defaults are a 20,000,000-pixel input limit and a 5-second request timeout. Authentication uses `SEIYUU_FACEID_API_KEY`. Configure a private client subnet for same-host container calls. The [API guide](docs/API.md) documents upload limits, configuration and errors. An importable [OpenAPI definition](docs/detect.openapi.yaml) covers detection. Python serves interactive docs at `/docs`.
+
+## Recognition and data
+
+Each face passes detection, quality checks, five-point alignment and two frozen backbones. The unit AdaFace and R50 vectors are concatenated in that order and divided by √2 before scaling and classification. Scores are probabilities over the built-in identities. The default acceptance threshold is `0.95`. Low quality or lower probability returns `review`, with candidates when available. Unknown-person and artwork rejection require additional validation.
+
+The historical pool contains 5,115 records, split into 3,574/490/1,051 train/validation/test rows. The first two splits fit the 4,064-row head. Historical Top-5 is 99.14% and Macro-F1 is 99.10% over the 49 identities with test samples. ONNX re-extraction reproduced all recorded Top-1 predictions in the historical verification. The evidence is in `evaluation.json`, `holdout_scores.npz` and `runtime_verification.json` within that bundle.
+
+Unclassified photos remain unlabeled. Character artwork is excluded from real-person training labels.
+
+The web interface manages raw samples, human face review and recognition. Adding samples or identities requires a separately prepared split and classifier training. Private frozen features are in `data/training/`, and experiments are in `data/experiments/`. Historical photo cleanup removed some originals and crops. See the [data layout](data/README.md) and [training guide](training/README.md).
+
+```bash
+uv run --extra training python tools/train_classifier.py --output /tmp/classifier.npz
 uv run python tools/evaluate.py
 uv run python tools/evaluate.py --reextract
 uv run pytest
 uv run ruff check .
 ```
 
-Start the HTTP API and upload an image:
+Training writes a new output path. Feature evaluation requires the frozen archives, and re-extraction requires the matching crops. The supplied configuration enables parallel backbones with two intra-op threads per backbone. Older configurations default to sequential execution.
 
-```bash
-uv run uvicorn seiyuu_faceid.api.app:create_app --factory --host 127.0.0.1 --port 8000
-curl --fail-with-body http://127.0.0.1:8000/v1/recognize -F 'file=@photo.jpg'
-```
+## Deployment and further reading
 
-The API supports recognition, batches, detection, model metadata and health checks.
-See the [API guide](docs/API.md) for payloads, errors, optional Bearer authentication and deployment;
-interactive documentation is available at `http://127.0.0.1:8000/docs`.
-API dependencies are optional; omit `--extra api` for web-only use.
+Docker, Python/systemd and C++/Go/systemd are supported. CI deployment archives are in Actions Artifacts, images in Docker Hub, and model files with verified training counts in GitHub Releases.
 
-Place the complete private model bundle in `models/selected/` and the SCRFD detector at `models/det_500m.onnx`. Weights and private datasets are excluded from Git. Configuration: `configs/default.yaml`.
+For N150 + 8 GB, `configs/n150.yaml` and `compose.n150.yaml` reduce CPU work. The measured original profile traded about 34.4% less CPU time for about 37.9% longer mean HTTP latency. A later native FTZ/DAZ experiment measured about 0.68 seconds per request with the historical 98.48% holdout result. Long-running and stress acceptance were still pending in the historical report. See the [N150 report](docs/N150_BENCHMARK.md).
 
-The classifier fits 4,064 training/validation faces. On the fixed 1,051-face holdout it achieves **98.48% Top-1 (1,035 correct)**, 99.14% Top-5, and 99.10% macro-F1 over the 49 supported identities. The deployed ONNX models reproduce every held-out Top-1 prediction. This model was chosen after repeated exploratory comparisons on that holdout; independent confirmation remains necessary.
+LFW/WIDER FACE performance comparison used 756 fixed images and 9,072 timed requests on M4 Pro. Full recognition averaged 1.8%–2.7% lower latency for native C++/Go. Separate accuracy protocols measured LFW 99.13% on all 6,000 pairs and WIDER Easy/Medium/Hard AP 85.49/79.48/48.84 (×100) over 3,226 validation images. The [performance](docs/STANDARD_DATASET_BENCHMARK.md) and [accuracy](docs/STANDARD_DATASET_ACCURACY.md) reports define each task and its scope.
 
-Inputs undergo detection and five-point alignment. Unit AdaFace and R50 embeddings are concatenated in that order and divided by √2 before standardization and classification. Scores are probabilities among the known classes. The default probability threshold is 0.95. Faces passing quality checks return an identity only at or above that threshold; low-probability or low-quality faces return `review` with available candidates retained. Unknown-identity and artwork rejection have not been calibrated for this model.
-
-Original photos, reviewed labels and the frozen source-group split are preserved. `data/training/` contains 5,115 face crops, labels and features. The web sample preparation workflow does not retrain the model. Unclassified photos are unlabeled; character artwork is excluded from real-person training labels.
-
-The supplied configuration enables `runtime.parallel_backbones`: AdaFace and R50 run concurrently with two intra-op threads each. Set it to `false` for sequential execution on constrained hosts; older configurations without the option retain sequential behavior. The model and probability threshold are unchanged. See [accuracy comparisons and local latency measurements](docs/CLASSIFIER_OPTIMIZATION.md), and [training tools](training/README.md) for reproducible head search and benchmarking.
-
-For **N150 + 8 GB on Linux/Docker**, `configs/n150.yaml` and `compose.n150.yaml` provide a lower-CPU starting profile: one thread per backbone and ORT spinning disabled, retaining FP32 weights and recognition rules. Measure actual target latency before choosing settings. See the [N150 guide](docs/N150.md) for deployment and a benchmark that needs no training data.
-
-Reproduce the selected head without overwriting the deployed bundle:
-
-```bash
-uv run --extra training python tools/train_classifier.py --output /tmp/classifier.npz
-```
-
-Superseded classifiers, experiments and prototype-gallery matching code have been removed. See [the Chinese guide](README.zh-CN.md) for evaluation details and [model provenance](models/README.md) for upstream sources and terms.
+The [documentation index](docs/README.md) groups architecture, API, deployment, training, evaluations and historical implementation plans. Use the language navigation at the top of every maintained Markdown document.

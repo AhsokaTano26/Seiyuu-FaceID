@@ -87,6 +87,10 @@ func TestNativeHTTPIntegration(t *testing.T) {
 		return request("POST", path, &body, w.FormDataContentType(), "integration-key")
 	}
 	for _, data := range [][]byte{pngImage.Bytes(), jpegImage.Bytes()} {
+		status, result := post("/api/v1/detect?score_threshold=0.8", "file", data)
+		if status != 200 || result["has_face"] != false || result["face_count"] != float64(0) {
+			t.Fatal("internal detection", status, result)
+		}
 		for _, path := range []string{"/v1/detect", "/v1/recognize"} {
 			status, result := post(path, "file", data)
 			if status != 200 || result["image"].(map[string]any)["width"] != float64(128) || result["model_id"] != backend.Model().ModelID {

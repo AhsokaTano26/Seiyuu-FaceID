@@ -1,13 +1,18 @@
-# Linux 独立部署包
+# Independent Linux deployment bundle
 
-此目录包含已训练模型和配置，服务镜像由 GitHub Actions 发布到
-`tano26/seiyuu-faceid`。运行时在目标服务器本地完成检测、
-对齐与身份识别，不依赖开发电脑、训练图片、Python 安装、PyPI 或外部推理服务。
-目标服务器需预先安装 Docker Engine 和 Docker Compose v2；镜像架构必须与服务器匹配。
+[English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
-## 启动
+This directory contains trained models and configuration.
+GitHub Actions publishes the service image to `tano26/seiyuu-faceid`.
+At runtime, detection, alignment, and identity recognition all take place locally on the target server.
+Operation does not depend on the development computer, training photos, a host Python installation, PyPI, or external inference services.
+Preinstall Docker Engine and Docker Compose v2 on the server. The image architecture must match the server.
 
-在本目录操作。先校验全部文件，再导入镜像：
+<a id="启动"></a>
+
+## Start
+
+Work in this directory. Verify every file before importing the image.
 
 ```bash
 sha256sum --check SHA256SUMS
@@ -15,9 +20,9 @@ cp .env.example .env
 chmod 600 .env
 ```
 
-用 `openssl rand -hex 32` 生成密钥，将其填写到 `.env` 的
-`SEIYUU_FACEID_API_KEY=` 后。默认监听服务器所有网卡的 8000 端口；可在 `.env`
-修改绑定地址和端口。镜像发布后拉取并启动：
+Generate a key with `openssl rand -hex 32` and enter it after `SEIYUU_FACEID_API_KEY=` in `.env`.
+The default listener uses port 8000 on all server interfaces. Change the bind address and port in `.env` as needed.
+After the image is published, pull it and start the service.
 
 ```bash
 docker compose pull --policy always
@@ -25,20 +30,22 @@ docker compose up -d --wait --wait-timeout 180
 curl --fail http://127.0.0.1:8000/ready
 ```
 
-如果第一次加载模型超过 180 秒，先查看日志，再增加等待时间。
-服务运行时不下载依赖或模型。Compose 默认禁止自动拉取镜像，后续启动和重建
-也不需要连接 Docker Hub；安装或更新时才显式执行上面的拉取命令。
-主机和容器中都需要能读取 `models/` 和 `configs/default.yaml`。
+If initial model loading exceeds 180 seconds, inspect logs before increasing the wait timeout.
+The service downloads no dependencies or models at runtime.
+Compose disables automatic image pulls by default. Later starts and recreation require no Docker Hub connection.
+Only installation or updates explicitly use the pull command above.
+Both the host and container need read access to `models/` and `configs/default.yaml`.
 
-如果打包时额外包含了 `image.tar`，目标服务器也可完全离线启动：用
-`docker load --input image.tar` 导入匹配架构的镜像，再运行
-`docker compose up -d --pull never --wait --wait-timeout 180`，无需执行 `docker compose pull`。
-Docker 和 Compose 自身需提前安装。更新镜像时可先备份 `.env` 中的镜像版本，
-再拉取新版本并运行 `docker compose up -d`。
+If packaging also included `image.tar`, the target server can start fully offline.
+Import the matching architecture's image with `docker load --input image.tar`, then run `docker compose up -d --pull never --wait --wait-timeout 180` without `docker compose pull`.
+Docker and Compose themselves must be preinstalled.
+Before updating, back up the image version in `.env`, then pull the new version and run `docker compose up -d`.
 
-## 远程调用
+<a id="远程调用"></a>
 
-调用设备设置自己的客户端变量；密钥与服务器 `.env` 中一致：
+## Remote calls
+
+Set client variables on the calling device, using the same key as the server's `.env`.
 
 ```bash
 export FACEID_URL='http://服务器IP:8000'
@@ -50,10 +57,13 @@ curl --fail-with-body "$FACEID_URL/v1/recognize" \
   -F 'file=@photo.jpg'
 ```
 
-允许调用方访问所选端口；公网服务使用 HTTPS 反向代理。完整接口见
-[API.md](docs/API.md)，在线文档为 `/docs`。首页测试页面默认关闭。
+Allow callers to reach the selected port. Use an HTTPS reverse proxy for public services.
+See [API.md](../docs/API.md) for the complete interface. Online documentation is at `/docs`.
+The home test page is disabled by default.
 
-## 运维
+<a id="运维"></a>
+
+## Operations
 
 ```bash
 docker compose ps
@@ -62,25 +72,29 @@ docker stats --no-stream
 docker compose down
 ```
 
-正常退出后手动启动仍需 `docker compose up -d`；运行中的服务会按
-`unless-stopped` 策略在崩溃或主机重启后恢复。健康检查标记异常，不会单凭
-`unhealthy` 自动重启容器。修改配置后运行 `docker compose restart faceid`；
-修改 `.env` 后运行 `docker compose up -d --force-recreate`。
+Manual startup after a normal shutdown still requires `docker compose up -d`.
+A running service recovers from crashes or host reboots under the `unless-stopped` policy.
+Health checks mark failures, but `unhealthy` alone does not restart a container.
+After configuration changes, run `docker compose restart faceid`.
+After `.env` changes, run `docker compose up -d --force-recreate`.
 
-当前为 CPU 推理、单 worker。普通测试服务器可先按 2 核、4 GiB 内存准备，
-这是容量规划起点，最低内存、延迟和吞吐需要在目标服务器实测。模型权重约
-417 MiB，不等于实际运行内存；多人脸图片会增加计算时间。
-现有权重支持 50 个已训练身份，迁移无需重新训练。
+The service currently uses CPU inference and one worker.
+A standard test server can start with 2 cores and 4 GiB of memory for capacity planning.
+Minimum memory, latency, and throughput require measurement on the target server.
+Weights total approximately 417 MiB, which does not equal runtime memory usage.
+Images with multiple faces increase computation time.
+Existing weights support 50 trained identities, and migration requires no retraining.
 
-N150 + 8 GB 的 Linux 主机可使用包内的省 CPU 配置（需包含对应代码的新镜像）：
+N150 + 8 GB Linux hosts can use the bundled CPU-saving configuration with a new image containing the corresponding code.
 
 ```bash
 docker compose -f compose.yaml -f compose.n150.yaml up -d --wait --wait-timeout 180
 ```
 
-该配置保留原 FP32 模型、并行双骨干，每骨干一个线程并关闭线程自旋。
-实际延迟、CPU 与内存需要在目标机实测，操作方法见 [N150 指南](docs/N150.md)。
+This configuration keeps the original FP32 models and parallel dual backbones, with one thread per backbone and spinning disabled.
+Measure actual latency, CPU, and memory on the target host.
+See the [N150 guide](../docs/N150.md) for procedures.
 
-配置和模型位于此目录下，备份整个目录即可迁移。部署包含本地模型，请按自己的
-访问范围保存；模型来源与使用范围见 `models/selected/MODEL_CARD.md` 和
-`manifest.json`。
+Configuration and models reside in this directory, so backing up the entire directory supports migration.
+The deployment contains local models. Store it within your intended access scope.
+See `models/selected/MODEL_CARD.md` and `manifest.json` for model sources and permitted use.

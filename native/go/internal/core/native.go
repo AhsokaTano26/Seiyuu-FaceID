@@ -88,11 +88,15 @@ func (e *nativeEngine) Process(data []byte, options httpapi.Options) (httpapi.Co
 		return decoded, &httpapi.APIError{Status: 400, Code: "empty_file", Message: "The uploaded file is empty."}
 	}
 	mode := C.int(0)
-	if options.DetectionOnly {
+	threshold := options.ProbabilityThreshold
+	if options.CompactDetection {
+		mode = 3
+		threshold = options.ScoreThreshold
+	} else if options.DetectionOnly {
 		mode = 1
 	}
 	var result *C.char
-	status := C.faceid_process_encoded(e.handle, (*C.uchar)(unsafe.Pointer(&data[0])), C.size_t(len(data)), mode, C.int(options.TopK), C.double(options.ProbabilityThreshold), &result)
+	status := C.faceid_process_encoded(e.handle, (*C.uchar)(unsafe.Pointer(&data[0])), C.size_t(len(data)), mode, C.int(options.TopK), C.double(threshold), &result)
 	runtime.KeepAlive(data)
 	if result == nil {
 		return decoded, errors.New("native inference returned no output")

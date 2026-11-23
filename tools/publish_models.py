@@ -83,10 +83,12 @@ class GitHubReleases:
         self.repository = repository
         self.token = token
 
-    def request(self, endpoint: str, data: dict | None = None, *, method="GET"):
+    def request(
+        self, endpoint: str, data: dict | None = None, *, method="GET", namespace="releases"
+    ):
         payload = None if data is None else json.dumps(data).encode()
         request = urllib.request.Request(
-            f"https://api.github.com/repos/{self.repository}/releases{endpoint}",
+            f"https://api.github.com/repos/{self.repository}/{namespace}{endpoint}",
             data=payload,
             method=method,
             headers={
@@ -154,6 +156,30 @@ class GitHubReleases:
     def delete_failed(self, tag, asset_id):
         self.request(f"/assets/{asset_id}", method="DELETE")
 
+    def dispatch_model(self, tag: str) -> bool:
+        if not re.fullmatch(r"models-[0-9a-f]{16}", tag):
+            raise ValueError("Invalid model tag for workflow dispatch.")
+        # Repeated app builds reuse a successful or active validation of these model bytes.
+        # Failed dispatches remain retryable even after the Release is already public.
+        runs = self.request("?per_page=100", namespace="actions/workflows/ci.yml/runs")
+        for run in runs["workflow_runs"]:
+            event, branch = run.get("event"), run.get("head_branch")
+            trusted = (run.get("head_repository") or {}).get("full_name") == self.repository and (
+                (event in ("repository_dispatch", "workflow_dispatch") and branch == "main")
+                or (event == "release" and branch == tag)
+            )
+            if trusted and run["display_title"] == f"Model {tag}":
+                if run["status"] != "completed" or run["conclusion"] == "success":
+                    return False
+                break
+        self.request(
+            "",
+            {"event_type": "model-published", "client_payload": {"tag": tag}},
+            method="POST",
+            namespace="dispatches",
+        )
+        return True
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -161,18 +187,25 @@ def main():
     parser.add_argument("--metadata", type=Path, required=True)
     parser.add_argument("--notes", type=Path, required=True)
     parser.add_argument("--revision", required=True)
+    parser.add_argument(
+        "--dispatch", action="store_true", help="Ensure model deployment CI is triggered"
+    )
     args = parser.parse_args()
     service = GitHubReleases(
         os.environ.get("GITHUB_REPOSITORY", ""), os.environ.get("GH_TOKEN", "")
     )
+    tag = json.loads(args.metadata.read_text())["tag"]
     result = publish_models(
         service,
-        json.loads(args.metadata.read_text())["tag"],
+        tag,
         args.revision,
         args.notes.read_text(encoding="utf-8"),
         args.directory,
     )
     print(result)
+    if args.dispatch:
+        dispatched = service.dispatch_model(tag)
+        print("Model CI dispatched." if dispatched else "Model CI already running or successful.")
     if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
         with Path(summary).open("a", encoding="utf-8") as handle:
             handle.write(f"模型发布：{result}\n")

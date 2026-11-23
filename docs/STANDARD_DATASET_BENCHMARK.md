@@ -1,163 +1,122 @@
-# 本地标准数据集性能测试：LFW 与 WIDER FACE
+# Local standard-dataset performance benchmark with LFW and WIDER FACE
 
-本文记录速度、资源与一致性。后续已补齐 **LFW 全部 6,000 对的十折准确率、WIDER
-全部 3,226 张验证图片的检测 AP，以及 1,051 张声优留出复测**，见
-[完整准确率报告](STANDARD_DATASET_ACCURACY.md)。
+[English](STANDARD_DATASET_BENCHMARK.md) | [简体中文](STANDARD_DATASET_BENCHMARK.zh-CN.md) | [日本語](STANDARD_DATASET_BENCHMARK.ja.md)
 
-2026-10-28，在 Apple M4 Pro / 24 GiB 的本机，用 **756 张公开数据集图片、
-6 个独立服务进程、9,072 个计时 HTTP 请求**比较 Python 与 C++/Go。
-三轮输出一致性检查和独立统计核算均通过。
+This document records speed, resources, and parity. The subsequent evaluation completed **ten-fold accuracy on all 6,000 LFW pairs, detection AP on all 3,226 WIDER validation images, and a rerun on 1,051 voice-actor holdout faces**. See the [full accuracy report](STANDARD_DATASET_ACCURACY.md).
 
-**完整识别平均耗时仅降低约 1.8%–2.7%，峰值 RSS 中位数降低约 3.8%。**
-仅检测的收益较大，约 7.9%–14.7%。这说明本机完整识别仍主要花在模型计算上，
-语言迁移本身带来的收益有限。这里是 Mac ARM、FTZ/DAZ 关闭时的对照；
-N150 上 FTZ/DAZ 的效果另见 [N150 实测报告](N150_BENCHMARK.md)，两者不能混用。
+On 2026-10-28, Python and C++/Go were compared locally on an Apple M4 Pro / 24 GiB machine using **756 public-dataset images, 6 independent service processes, and 9,072 timed HTTP requests**. All three rounds of output parity checks and the independent statistical audit passed.
 
-## 输入与来源
+**Mean full-recognition latency fell by only about 1.8%–2.7%, and median peak RSS by about 3.8%.** Detection-only gains were larger, about 7.9%–14.7%. Full recognition on this machine remained dominated by model computation, leaving limited gains from language migration itself. This comparison used Mac ARM with FTZ/DAZ disabled. The N150 FTZ/DAZ results are recorded separately in the [N150 report](N150_BENCHMARK.md), and the two results must be kept distinct.
 
-| 数据集 | 原始范围 | 本次固定抽样 | 图片特点 |
+## Inputs and sources
+
+| Dataset | Original scope | Fixed sample for this run | Image characteristics |
 | --- | --- | --- | --- |
-| LFW 原始版，非 funneled | 13,233 张、5,749 个身份 | 512 个身份各 1 张，共 512 张 | 原始 250 × 250 JPEG，通常包含一个主要人脸，也可能包含背景人脸 |
-| WIDER FACE validation | 3,226 张、61 个场景类别 | 每类 4 张，共 244 张 | 多人、小脸、遮挡等；本次宽度均为 1,024，高度 351–2,014 |
+| Original LFW, non-funneled | 13,233 images, 5,749 identities | 1 image from each of 512 identities, 512 total | Original 250 × 250 JPEGs, usually with one main face and sometimes background faces |
+| WIDER FACE validation | 3,226 images, 61 scene categories | 4 images per category, 244 total | Multiple people, small faces, occlusion, and other challenges. All selected images were 1,024 pixels wide and 351–2,014 pixels high |
 
-LFW 下载使用 [固定版本镜像](https://huggingface.co/datasets/DerrickUnleashed/LFW/tree/f7571fa9dd5a5c31ab781de5227c6f1b6171c0c5)，
-归档 SHA-256 与 [scikit-learn 的数据定义](https://github.com/scikit-learn/scikit-learn/blob/main/sklearn/datasets/_lfw.py)
-一致。WIDER FACE 使用 [CUHK-CSE 固定版本镜像](https://huggingface.co/datasets/CUHK-CSE/wider_face/tree/833d07e7bf3860f294242312fe95eed0561eeb17/data)，
-数据范围及用途见 [WIDER FACE 项目页](https://mmlab.ie.cuhk.edu.hk/projects/WIDERFace/index.html)。
+LFW was downloaded from a [revision-pinned mirror](https://huggingface.co/datasets/DerrickUnleashed/LFW/tree/f7571fa9dd5a5c31ab781de5227c6f1b6171c0c5). Its archive SHA-256 matched the [scikit-learn dataset definition](https://github.com/scikit-learn/scikit-learn/blob/main/sklearn/datasets/_lfw.py). WIDER FACE used a [revision-pinned CUHK-CSE mirror](https://huggingface.co/datasets/CUHK-CSE/wider_face/tree/833d07e7bf3860f294242312fe95eed0561eeb17/data). Dataset scope and intended uses are described on the [WIDER FACE project page](https://mmlab.ie.cuhk.edu.hk/projects/WIDERFace/index.html).
 
-| 文件 | SHA-256 |
+| File | SHA-256 |
 | --- | --- |
 | `lfw.tgz` | `055f7d9c632d7370e6fb4afc7468d40f970c34a80d4c6f50ffec63f5a8d536c0` |
 | `WIDER_val.zip` | `f9efbd09f28c5d2d884be8c0eaef3967158c866a593fc36ab0413e4b2a58a17a` |
 | `wider_face_split.zip` | `c7561e4f5e7a118c249e0a5c5c902b0de90bbf120d7da9fa28d99041f68a8a5c` |
 
-抽样在推理前固定，种子字符串为 `20261028-standard-benchmark-v1`，以
-`SHA256(seed + ':' + 相对路径或身份名)` 排序。LFW 先选 512 个身份，再各选一张；
-WIDER 在各类别内选 4 张。没有根据模型输出筛选图片，也没有重编码、裁剪或调整
-输入分辨率；应用原有检测缩放、质量门槛和识别流程。
+Sampling was fixed before inference using seed string `20261028-standard-benchmark-v1`, ordered by `SHA256(seed + ':' + relative path or identity name)`. LFW first selected 512 identities, then one image per identity. WIDER selected 4 images within each category. Images were not selected using model output and were not re-encoded, cropped, or resized as inputs. The existing application detection resizing, quality thresholds, and recognition pipeline were used.
 
-仅解出选中图片，共约 33.9 MiB；连同完整下载归档和结果，本次目录约 578 MiB。
-数据与逐张响应保留在被 Git 忽略的实验目录，不进入仓库或模型 Release。
+Only selected images were extracted, totaling about 33.9 MiB. Including complete downloaded archives and results, the experiment directory occupied about 578 MiB. Data and per-image responses remain in a Git-ignored experiment directory and are excluded from the repository and model Releases.
 
-## 测量方法
+## Measurement method
 
-环境为 macOS 26.6.2 ARM64、Apple M4 Pro（14 个逻辑 CPU）、24 GiB 内存。
-Python 3.13.15、NumPy 2.5.2、ONNX Runtime 1.29.0、OpenCV Python 5.0.0.93、
-Pillow 12.3.0、FastAPI 0.154.0、Uvicorn 0.54.0；原生程序为 Go 1.26.2、
-C++ / OpenCV 5.0.0 / ONNX Runtime 1.29.0 的 macOS ARM 构建。
+The environment was macOS 26.6.2 ARM64, Apple M4 Pro with 14 logical CPUs, and 24 GiB memory. It used Python 3.13.15, NumPy 2.5.2, ONNX Runtime 1.29.0, OpenCV Python 5.0.0.93, Pillow 12.3.0, FastAPI 0.154.0, and Uvicorn 0.54.0. The native program was a macOS ARM build with Go 1.26.2, C++, OpenCV 5.0.0, and ONNX Runtime 1.29.0.
 
-两边使用相同 FP32 模型及分类头、`configs/n150.yaml` 的线程配置：每骨干 1 线程、
-双骨干并行、检测器 2 线程、关闭自旋、保留 CPU arena。默认 Top-5 和 0.95 阈值
-相同。原生 JSON 未开启 `flush_denormals`；当前 FTZ/DAZ 实现仅支持 Linux x86_64。
+Both implementations used the same FP32 models and classification head with the `configs/n150.yaml` thread settings. Each backbone had 1 thread, the two backbones ran in parallel, the detector had 2 threads, spinning was disabled, and the CPU arena was retained. Default Top-5 and the 0.95 threshold were identical. The native JSON did not enable `flush_denormals`. The current FTZ/DAZ implementation supports only Linux x86_64.
 
-每个服务进程分别测两个数据集的两条路径：
+Each service process measured two paths for each dataset.
 
-- `/v1/detect`：上传、解码、检测及响应。
-- `/v1/recognize`：上传、解码、检测、质量检查、符合门槛的人脸对齐与双骨干分类、响应。
+- `/v1/detect` covered upload, decoding, detection, and response.
+- `/v1/recognize` covered upload, decoding, detection, quality checks, alignment and dual-backbone classification for qualifying faces, and response.
 
-每个阶段先进行 10 次不计时预热，再对该数据集全部选中图片各请求一次。
-每种实现运行 3 个新进程，顺序为 `Python → native → native → Python → Python → native`；
-后续轮次还调整数据集和接口阶段顺序。一次只运行一个待测服务，单客户端顺序请求，
-没有并发压测或批量推理。总计 **9,072 次计时、240 次预热**请求。
+Each phase began with 10 untimed warmup requests, then requested every selected image in that dataset once. Each implementation ran in 3 fresh processes, in the order `Python → native → native → Python → Python → native`. Later rounds also varied dataset and endpoint-phase order. Only one tested service ran at a time, with one client issuing sequential requests. No concurrent load test or batch inference was performed. Totals were **9,072 timed and 240 warmup requests**.
 
-图片字节预先载入客户端内存。HTTP 时间测量本机回环上传至响应完成，包含客户端和
-连接开销；它不是纯模型耗时或公网上传体验。吞吐为整个顺序请求阶段的请求数除以
-耗时，包含循环与响应处理开销，不是并发极限吞吐。
+Image bytes were loaded into client memory in advance. HTTP time measured local loopback upload through response completion, including client and connection overhead. It does not measure pure model time or public-network upload experience. Throughput was request count divided by elapsed time across the whole sequential phase, including loop and response-processing overhead. It does not establish maximum concurrent throughput.
 
-CPU 时间读取 macOS `proc_pid_rusage(RUSAGE_INFO_V2)` 的服务进程 user + system
-时间，按 `mach_timebase_info` 的 `125/3` 将 Mach ticks 换算为纳秒；计时前用自身
-`process_time_ns` 做过校准检查。CPU 毫秒／请求涵盖服务所有线程，不含客户端，
-不是整机耗电量。峰值 RSS 由每个服务退出后的 `wait4` 获取，包括启动、全部预热、
-两种数据集和两条接口；不把它按阶段拆分成数据集各自的峰值。
+CPU time came from service-process user + system time in macOS `proc_pid_rusage(RUSAGE_INFO_V2)`, converting Mach ticks to nanoseconds with the `125/3` ratio from `mach_timebase_info`. A calibration check against the measuring process's own `process_time_ns` preceded timing. CPU milliseconds per request include all service threads, exclude the client, and do not measure whole-machine energy use. Peak RSS came from `wait4` after each service exited and includes startup, all warmups, both datasets, and both endpoints. It was not divided into separate dataset-stage peaks.
 
-以下表格取 **3 个进程各自指标的中位数**。P95 为每进程 nearest-rank P95 再取
-中位数，不是将三轮请求合并后的全局 P95。日常后台应用保持运行，未固定 CPU
-频率、清空系统缓存或控制温度；几个百分点的差异应按这次工作负载解释。
+The tables use **the median of the 3 process-level metrics**. P95 is the median of each process's nearest-rank P95. Requests from the three rounds were not pooled into a global P95. Normal background applications remained running. CPU frequency, system caches, and temperature were not controlled, so differences of a few percent should be interpreted within this workload.
 
-## 完整识别结果
+## Full-recognition results
 
-| 数据集 | 实现 | 平均 HTTP | P50 | P95 | 顺序吞吐 | CPU／请求 |
+| Dataset | Implementation | Mean HTTP | P50 | P95 | Sequential throughput | CPU/request |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| LFW 512 张 | Python | 59.91 ms | 54.46 ms | 93.99 ms | 16.69 张/s | 100.98 ms |
-| LFW 512 张 | C++/Go | **58.82 ms** | 53.13 ms | 92.11 ms | 17.00 张/s | 100.57 ms |
-| WIDER 244 张 | Python | 77.39 ms | 58.87 ms | 212.00 ms | 12.92 张/s | 130.35 ms |
-| WIDER 244 张 | C++/Go | **75.33 ms** | 55.87 ms | 210.70 ms | 13.27 张/s | 128.87 ms |
+| LFW, 512 images | Python | 59.91 ms | 54.46 ms | 93.99 ms | 16.69 images/s | 100.98 ms |
+| LFW, 512 images | C++/Go | **58.82 ms** | 53.13 ms | 92.11 ms | 17.00 images/s | 100.57 ms |
+| WIDER, 244 images | Python | 77.39 ms | 58.87 ms | 212.00 ms | 12.92 images/s | 130.35 ms |
+| WIDER, 244 images | C++/Go | **75.33 ms** | 55.87 ms | 210.70 ms | 13.27 images/s | 128.87 ms |
 
-LFW 的平均 HTTP 耗时减少 **1.83%**，WIDER 减少 **2.67%**；CPU 时间分别减少
-约 **0.41%** 和 **1.13%**，收益很小。两边仍执行相同的双骨干计算。
+Mean HTTP time decreased by **1.83%** on LFW and **2.67%** on WIDER. CPU time decreased by approximately **0.41%** and **1.13%**, respectively. These gains were small, with both implementations still performing the same dual-backbone computation.
 
-每轮完整识别的工作量如下，Python 和 C++/Go 完全相同：
+Full-recognition work per round was identical for Python and C++/Go.
 
-| 数据集 | 检测人脸 | 进入分类 | 质量拦截 | 无人脸图片 | 单图最多检测人脸 |
+| Dataset | Detected faces | Classified | Blocked by quality | Images without faces | Most detected faces in one image |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | LFW | 645 | 579 | 66 | 1 | 9 |
 | WIDER | 1,219 | 363 | 856 | 14 | 105 |
 
-所以 WIDER 的 75.33 ms 是包含质量过滤的完整应用流程，不能说成“每张图中所有
-标注人脸都执行了双骨干”。抽样 WIDER 标注共 2,892 张人脸，其中 2,872 张标为有效；
-本次未按官方规则匹配检测框，因此这些计数不能直接相除作为召回率。
+WIDER's 75.33 ms covers the complete application pipeline including quality filtering. It does not mean that every annotated face in every image ran through both backbones. The WIDER sample annotated 2,892 faces, including 2,872 marked valid. Detection boxes were not matched under official evaluation rules in this run, so dividing these counts does not yield recall.
 
-## 仅检测结果
+## Detection-only results
 
-| 数据集 | 实现 | 平均 HTTP | P95 | 顺序吞吐 | CPU／请求 |
+| Dataset | Implementation | Mean HTTP | P95 | Sequential throughput | CPU/request |
 | --- | --- | ---: | ---: | ---: | ---: |
-| LFW | Python | 15.95 ms | 16.57 ms | 62.64 张/s | 21.28 ms |
-| LFW | C++/Go | **14.69 ms** | 15.32 ms | 68.02 张/s | 20.03 ms |
-| WIDER | Python | 19.32 ms | 22.47 ms | 51.72 张/s | 25.19 ms |
-| WIDER | C++/Go | **16.48 ms** | 18.68 ms | 60.44 张/s | 22.39 ms |
+| LFW | Python | 15.95 ms | 16.57 ms | 62.64 images/s | 21.28 ms |
+| LFW | C++/Go | **14.69 ms** | 15.32 ms | 68.02 images/s | 20.03 ms |
+| WIDER | Python | 19.32 ms | 22.47 ms | 51.72 images/s | 25.19 ms |
+| WIDER | C++/Go | **16.48 ms** | 18.68 ms | 60.44 images/s | 22.39 ms |
 
-平均 HTTP 耗时分别减少 **7.90%**、**14.69%**。这包含不同图像解码、数据处理及
-HTTP 路径的变化，不把全部差值归因为语言本身。
+Mean HTTP time decreased by **7.90%** and **14.69%**, respectively. These changes include differences in image decoding, data processing, and HTTP paths. The full difference cannot be attributed to language alone.
 
-## 内存与启动
+## Memory and startup
 
-| 实现 | 峰值 RSS 中位数 | 三次进程峰值 RSS | 启动到就绪中位数 |
+| Implementation | Median peak RSS | Peak RSS of the three processes | Median startup to readiness |
 | --- | ---: | --- | ---: |
 | Python | 1,012.89 MiB | 1,012.89 / 1,043.66 / 1,002.08 MiB | 796.20 ms |
 | C++/Go | **974.42 MiB** | 891.22 / 989.34 / 974.42 MiB | 466.89 ms |
 
-峰值 RSS 中位数减少 **38.47 MiB／3.80%**，各次进程有明显波动。原生三次启动
-分别为 1,344.69 / 395.80 / 466.89 ms，Python 为 934.42 / 796.20 / 633.85 ms；
-没有统一冷缓存条件，不能只根据中位数声称冷启动必然更快。
+Median peak RSS decreased by **38.47 MiB / 3.80%**, with substantial process-to-process variation. Native startup times were 1,344.69 / 395.80 / 466.89 ms, while Python times were 934.42 / 796.20 / 633.85 ms. Cold-cache conditions were not standardized, so the medians alone do not establish consistently faster cold starts.
 
-## 输出一致性与准确率边界
+## Output parity and accuracy limits
 
-三轮的两个数据集、两条接口共 **12 组对照全部通过**。每种实现跨进程输出也完全
-可重复（排除处理耗时字段）。完整识别中：
+All **12 comparisons** across three rounds, two datasets, and two endpoints passed. Outputs were fully reproducible across processes for each implementation after excluding processing-time fields. Full recognition showed the following results.
 
-- 人脸数、检测框、检测分数一致；候选身份顺序、质量判定和 0.95 接受判定一致。
-- 分类概率最大绝对差为 **`3.5762786865234375e-7`**，质量分数最大差约 `2.22e-16`。
-- 数值不是逐位相同。比较容差沿用现有验证工具：框／关键点 0.01 像素，分数 `5e-5`。
-- 每轮 942 张实际分类人脸均因概率不足进入人工复核，另有 922 张被质量检查拦下；
-  这批输入没有触发自动接受，不据此宣称未知身份误识率为零。
+- Face counts, boxes, and detection scores matched. Candidate identity order, quality decisions, and acceptance at 0.95 matched.
+- The maximum absolute classification-probability difference was **`3.5762786865234375e-7`**. The maximum quality-score difference was about `2.22e-16`.
+- Values were not bitwise identical. Existing validation-tool tolerances were retained, with 0.01 pixels for boxes/landmarks and `5e-5` for scores.
+- In every round, all 942 classified faces required human review because of insufficient probability, while 922 more were blocked by quality checks. These inputs produced no automatic acceptances, which does not establish a zero false-identification rate for unknown identities.
 
-这是**标准数据集子集上的系统性能与实现一致性测试**，没有重训 50 类分类头。
-LFW 人名不能直接用作当前分类头标签；本次没有运行 LFW 的 6,000 对、10 折验证
-协议，也没有计算 WIDER 官方 Easy / Medium / Hard AP。原来的 **98.48%** 仍是
-原有声优历史留出集的成绩，不是本次标准数据集准确率。
+This was a **system-performance and implementation-parity test on subsets of standard datasets**, without retraining the 50-class head. LFW names cannot directly serve as labels for that head. This run did not execute LFW's 6,000-pair, 10-fold verification protocol or calculate official WIDER Easy / Medium / Hard AP. The existing **98.48%** remained the score on the historical voice-actor holdout set and was not accuracy on these standard datasets.
 
-## 证据与复查
+## Evidence and review
 
-本次文件均在本机 `data/experiments/standard-bench-20261028/`：
+Files are local under `data/experiments/standard-bench-20261028/`.
 
-| 文件 | 用途 |
+| File | Purpose |
 | --- | --- |
-| `downloads/`、`images/`、`manifest.json` | 校验后的归档、选中原图、固定抽样与每张图片摘要 |
-| `prepare.py`、`bench.py` | 抽样与独立 HTTP 进程测试脚本 |
-| `results.json` | 六个进程、逐请求耗时、CPU／RSS、完整一致性汇总 |
-| `*-private.json` | 逐张原始响应，供复查，不进入仓库 |
-| `audit.py`、`audit.json` | 独立重算统计值、输入／产物校验、递归比较响应和 6 项负向审计测试 |
-| `postflight.json` | 六个进程正常回收、临时监听端口全部关闭 |
+| `downloads/`, `images/`, `manifest.json` | Verified archives, selected originals, fixed sample, and per-image hashes |
+| `prepare.py`, `bench.py` | Sampling and independent HTTP-process test scripts |
+| `results.json` | Six processes, per-request times, CPU/RSS, and complete parity summary |
+| `*-private.json` | Raw per-image responses retained for local review and excluded from the repository |
+| `audit.py`, `audit.json` | Independent recalculation of statistics, input/artifact verification, recursive response comparison, and 6 negative audit tests |
+| `postflight.json` | Normal cleanup of all six processes and closure of all temporary listening ports |
 
-独立审计确认 **9,072 个计时请求**全部覆盖；从原始响应重算输出一致性，验证
-模型、配置、服务、核心库、输入和脚本摘要，并检查 CPU 阶段时间不超过进程生命周期
-CPU 时间。审计还确认所有 756 个样本路径和内容摘要唯一。
+The independent audit confirmed coverage of all **9,072 timed requests**, recalculated parity from raw responses, verified model, configuration, service, core-library, input, and script hashes, and checked that phase CPU times did not exceed process-lifetime CPU time. It also confirmed that all 756 sample paths and content hashes were unique.
 
-| 依据 | SHA-256 |
+| Evidence | SHA-256 |
 | --- | --- |
-| 抽样清单 | `0e83d3bf7850154b18ed0b5373076b225dc05b93a469e6f95b8f2e5ad19d3bde` |
-| 最终结果 | `76192b483dbb6122a35ce8fb7a4731f4d459e83170c6f2c936b7a5439a22b7db` |
-| 本机 Go 服务 | `edde232221d8aa9c34ebed69092008664110cfaa53454976109d3150137aefe9` |
-| 本机 C++ 核心库 | `3f6c37231af07ff3fae6b0496f67b2b5a377b9f4a8cc21c5360b6e8a08751d2d` |
+| Sampling manifest | `0e83d3bf7850154b18ed0b5373076b225dc05b93a469e6f95b8f2e5ad19d3bde` |
+| Final results | `76192b483dbb6122a35ce8fb7a4731f4d459e83170c6f2c936b7a5439a22b7db` |
+| Local Go service | `edde232221d8aa9c34ebed69092008664110cfaa53454976109d3150137aefe9` |
+| Local C++ core library | `3f6c37231af07ff3fae6b0496f67b2b5a377b9f4a8cc21c5360b6e8a08751d2d` |
 
-测试结束后临时服务已停止，未改模型或判定阈值，未连接或变更远程服务，未 push。
+Temporary services were stopped after testing. Models and decision thresholds were unchanged. No remote services were connected to or modified, and nothing was pushed.

@@ -6,7 +6,7 @@ import os
 import secrets
 from collections.abc import Callable
 from contextlib import asynccontextmanager
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from time import perf_counter
 from typing import Annotated
@@ -18,6 +18,12 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 from starlette.responses import FileResponse, JSONResponse
 
+from seiyuu_faceid.api.detection import (
+    DETECT_PATH,
+    DetectionDeadline,
+    DetectionTimeout,
+    env_integer,
+)
 from seiyuu_faceid.api.errors import ApiError
 from seiyuu_faceid.api.schemas import (
     BatchResponse,
@@ -25,6 +31,7 @@ from seiyuu_faceid.api.schemas import (
     ErrorResponse,
     HealthResponse,
     ModelResponse,
+    PresenceResponse,
     RecognitionResponse,
 )
 from seiyuu_faceid.api.uploads import (
@@ -37,6 +44,7 @@ from seiyuu_faceid.api.uploads import (
 from seiyuu_faceid.runtime.config import AppConfig, load_config
 from seiyuu_faceid.runtime.engine import FaceIdEngine
 from seiyuu_faceid.runtime.pipeline import recognize_faces, serialize_result
+from seiyuu_faceid.vision.detector import ImageAspectError
 
 LOGGER = logging.getLogger(__name__)
 TopK = Annotated[int | None, Query(ge=1, le=50, description="Number of identity candidates.")]
@@ -44,6 +52,21 @@ Threshold = Annotated[
     float | None,
     Query(ge=0, le=1, allow_inf_nan=False, description="Acceptance probability for this request."),
 ]
+
+
+def _detect_presence(
+    engine: FaceIdEngine, data: bytes, limits: UploadLimits, score_threshold: float | None
+) -> dict[str, object]:
+    image = decode_image(data, "image", limits).pixels
+    try:
+        detections = engine.detect_array(image, score_threshold=score_threshold)
+    except ImageAspectError as exc:
+        raise ApiError(400, "invalid_image", str(exc)) from exc
+    faces = [
+        {"bbox": [round(float(v), 2) for v in face.bbox], "detector_score": float(face.score)}
+        for face in detections
+    ]
+    return {"has_face": bool(faces), "face_count": len(faces), "faces": faces}
 
 
 def _process_upload(
@@ -129,6 +152,12 @@ def create_app(
 ) -> FastAPI:
     """Construct the app without loading models until its lifespan starts."""
     limits = limits or UploadLimits()
+    detect_limits = replace(
+        limits,
+        max_image_pixels=env_integer(
+            "SEIYUU_FACEID_DETECT_MAX_PIXELS", limits.max_image_pixels, limits.max_image_pixels
+        ),
+    )
     key = os.environ.get("SEIYUU_FACEID_API_KEY", "") if api_key is None else api_key
     path = (
         Path(
@@ -151,7 +180,8 @@ def create_app(
             yield
         finally:
             try:
-                await run_in_threadpool(engine.close)
+                async with app.state.inference_lock:
+                    await run_in_threadpool(engine.close)
             finally:
                 app.state.engine = None
 
@@ -163,6 +193,11 @@ def create_app(
     )
     app.state.engine = None
     app.add_middleware(RequestSizeLimit, max_bytes=limits.max_request_bytes)
+    app.add_middleware(
+        DetectionDeadline,
+        timeout_ms=env_integer("SEIYUU_FACEID_DETECT_TIMEOUT_MS", 5000, 2**31 - 1),
+        client_cidr=os.getenv("SEIYUU_FACEID_DETECT_CLIENT_CIDR", ""),
+    )
 
     @app.exception_handler(HTTPException)
     async def http_error(request: Request, error: HTTPException):
@@ -275,6 +310,51 @@ def create_app(
             return await run_in_threadpool(
                 _process_upload, engine, file, limits, detection_only=True
             )
+
+    @app.post(
+        DETECT_PATH,
+        response_model=PresenceResponse,
+        dependencies=[Depends(authorize)],
+        tags=["Inference"],
+        responses={**error_responses, 403: {"model": ErrorResponse}},
+    )
+    async def detect_presence(
+        request: Request,
+        file: Annotated[UploadFile, File(description="JPEG, PNG or WebP image.")],
+        score_threshold: Annotated[float | None, Query(gt=0, le=1, allow_inf_nan=False)] = None,
+    ):
+        engine = require_engine()
+        if len((await request.form()).getlist("file")) != 1:
+            raise ApiError(422, "validation_error", "Upload exactly one image.")
+        if len(request.query_params.getlist("score_threshold")) > 1:
+            raise ApiError(422, "validation_error", "Provide score_threshold only once.")
+        if file.size is not None and file.size > detect_limits.max_upload_bytes:
+            raise ApiError(413, "file_too_large", "The uploaded file exceeds the byte limit.")
+        loop = asyncio.get_running_loop()
+        lock = app.state.inference_lock
+        deadline = request.state.detect_deadline
+        try:
+            async with asyncio.timeout_at(deadline):
+                await lock.acquire()
+                try:
+                    data = await file.read(detect_limits.max_upload_bytes + 1)
+                    if loop.time() >= deadline:
+                        raise DetectionTimeout()
+                    work = loop.run_in_executor(
+                        None, _detect_presence, engine, data, detect_limits, score_threshold
+                    )
+                except BaseException:
+                    lock.release()
+                    raise
+
+                def finished(future):
+                    lock.release()
+                    future.exception()  # Observe failures even if the HTTP caller already left.
+
+                work.add_done_callback(finished)
+                return await asyncio.shield(work)
+        except TimeoutError as exc:
+            raise DetectionTimeout() from exc
 
     @router.post("/recognize", response_model=RecognitionResponse, tags=["Inference"])
     async def recognize(

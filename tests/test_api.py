@@ -22,8 +22,8 @@ from seiyuu_faceid.vision.detector import FaceDetection
 
 
 class FixtureDetector:
-    def detect(self, image_bgr):
-        if not image_bgr.any():
+    def detect(self, image_bgr, *, score_threshold=0.5):
+        if not image_bgr.any() or score_threshold > 0.9:
             return []
         return [
             FaceDetection(
@@ -453,3 +453,128 @@ def test_api_clears_engine_state_even_if_close_fails():
     with pytest.raises(RuntimeError, match="close failed"), TestClient(app):
         assert app.state.engine is not None
     assert app.state.engine is None
+
+
+@pytest.mark.parametrize(
+    ("blank", "threshold", "expected"),
+    [
+        (False, None, 1),
+        (False, 0.9, 1),
+        (False, 0.91, 0),
+        (True, None, 0),
+    ],
+)
+def test_internal_detection_contract(blank, threshold, expected):
+    with TestClient(
+        create_app(engine_factory=FixtureEngine, api_key="secret"), client=("127.0.0.1", 4321)
+    ) as client:
+        params = {} if threshold is None else {"score_threshold": threshold}
+        response = client.post(
+            "/api/v1/detect",
+            params=params,
+            headers={"Authorization": "Bearer secret"},
+            files={"file": ("photo.png", png_bytes(blank=blank))},
+        )
+        assert response.status_code == 200
+        assert response.json() == {
+            "has_face": bool(expected),
+            "face_count": expected,
+            "faces": [{"bbox": [10, 10, 90, 90], "detector_score": 0.9}] if expected else [],
+        }
+
+
+def test_internal_detector_access_and_validation(monkeypatch):
+    monkeypatch.setenv("SEIYUU_FACEID_DETECT_MAX_PIXELS", "9000")
+    app = create_app(engine_factory=FixtureEngine, api_key="secret")
+    route = "/api/v1/detect"
+    auth = {"Authorization": "Bearer secret"}
+    with TestClient(app, client=("127.0.0.1", 1234)) as client:
+        assert upload(client, route).status_code == 401
+        assert (
+            upload(client, route, headers=auth, params={"score_threshold": "nan"}).status_code
+            == 422
+        )
+        assert upload(client, route, headers=auth).json()["error"]["code"] == "image_too_large"
+        assert upload(client, "/v1/detect", headers=auth).status_code == 200
+        assert (
+            client.post(route, files={"file": ("broken", b"???")}, headers=auth).status_code == 400
+        )
+    with TestClient(app, client=("8.8.8.8", 1234)) as external:
+        assert (
+            upload(external, route, headers={**auth, "X-Forwarded-For": "127.0.0.1"}).status_code
+            == 403
+        )
+
+
+def test_detection_timeout_keeps_engine_serialized_and_health_responsive(monkeypatch):
+    monkeypatch.setenv("SEIYUU_FACEID_DETECT_TIMEOUT_MS", "100")
+    with TestClient(create_app(engine_factory=FixtureEngine), client=("127.0.0.1", 1234)) as client:
+        detector = client.app.state.engine.detector
+        started = threading.Event()
+        release = threading.Event()
+        calls = []
+
+        def slow_detect(image, **kwargs):
+            calls.append(1)
+            started.set()
+            assert release.wait(3)
+            return []
+
+        monkeypatch.setattr(detector, "detect", slow_detect)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(upload, client, "/api/v1/detect")
+            try:
+                assert started.wait(1)
+                assert client.get("/ready").status_code == 200
+                for response in (first.result(1), upload(client, "/api/v1/detect")):
+                    assert response.status_code == 503
+                    assert response.json()["error"]["code"] == "detection_timeout"
+                assert len(calls) == 1
+            finally:
+                release.set()
+        assert upload(client, "/api/v1/detect").status_code == 200
+
+
+def test_internal_timeout_includes_streaming_upload(monkeypatch):
+    monkeypatch.setenv("SEIYUU_FACEID_DETECT_TIMEOUT_MS", "80")
+
+    async def body():
+        yield b'--slow\r\nContent-Disposition: form-data; name="file"; filename="a.png"\r\n\r\n'
+        await asyncio.sleep(1)
+        yield b"end\r\n--slow--\r\n"
+
+    async def request():
+        app = create_app(engine_factory=FixtureEngine)
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                return await asyncio.wait_for(
+                    client.post(
+                        "/api/v1/detect",
+                        content=body(),
+                        headers={"Content-Type": "multipart/form-data; boundary=slow"},
+                    ),
+                    timeout=0.8,
+                )
+
+    response = asyncio.run(request())
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "detection_timeout"
+
+
+def test_internal_subnet_and_inference_error(monkeypatch):
+    monkeypatch.setenv("SEIYUU_FACEID_DETECT_CLIENT_CIDR", "172.29.0.0/24")
+    app = create_app(engine_factory=FixtureEngine)
+    with TestClient(app, client=("172.29.0.3", 5001), raise_server_exceptions=False) as client:
+
+        def broken(image):
+            raise RuntimeError("private-detector-filename")
+
+        assert upload(client, "/api/v1/detect").status_code == 200
+        monkeypatch.setattr(app.state.engine.detector, "detect", broken)
+        failed = upload(client, "/api/v1/detect")
+        assert failed.status_code == 500
+        assert failed.json()["error"]["code"] == "internal_error"
+        assert "private-detector-filename" not in failed.text
+        assert client.get("/health").status_code == 200

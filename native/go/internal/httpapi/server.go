@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -25,14 +26,20 @@ type Limits struct {
 	MaxRequestBytes int64 `json:"max_request_bytes"`
 	MaxImagePixels  int64 `json:"max_image_pixels"`
 	MaxBatchSize    int   `json:"max_batch_size"`
+	detection       detectionPolicy
 }
 
-func DefaultLimits() Limits { return Limits{10 * 1024 * 1024, 81 * 1024 * 1024, 20_000_000, 8} }
+func DefaultLimits() Limits {
+	return Limits{MaxUploadBytes: 10 * 1024 * 1024, MaxRequestBytes: 81 * 1024 * 1024,
+		MaxImagePixels: 20_000_000, MaxBatchSize: 8}
+}
 
 type Options struct {
 	TopK                 int     `json:"top_k"`
 	ProbabilityThreshold float64 `json:"probability_threshold"`
 	DetectionOnly        bool    `json:"-"`
+	CompactDetection     bool    `json:"-"`
+	ScoreThreshold       float64 `json:"-"`
 }
 type ModelInfo struct {
 	ModelID          string   `json:"model_id"`
@@ -63,22 +70,27 @@ func (e *APIError) Error() string                         { return e.Message }
 func apiError(status int, code, message string) *APIError { return &APIError{status, code, message} }
 
 type Server struct {
-	backend    Backend
-	model      ModelInfo
-	key        string
-	limits     Limits
-	gate       chan struct{}
-	slots      chan struct{}
-	closed     atomic.Bool
-	closeOnce  sync.Once
-	closeError error
+	timedDetect http.Handler
+	backend     Backend
+	model       ModelInfo
+	key         string
+	limits      Limits
+	gate        chan struct{}
+	slots       chan struct{}
+	closed      atomic.Bool
+	closeOnce   sync.Once
+	closeError  error
 }
 
 func New(backend Backend, key string, limits Limits) *Server {
 	if limits.MaxUploadBytes < 1 || limits.MaxRequestBytes < 1 || limits.MaxImagePixels < 1 || limits.MaxBatchSize < 1 {
 		panic("invalid HTTP upload limits")
 	}
+	if limits.detection.timeout == 0 {
+		limits.detection = detectionPolicy{timeout: 5 * time.Second, maxPixels: limits.MaxImagePixels}
+	}
 	s := &Server{backend: backend, key: key, limits: limits, gate: make(chan struct{}, 1), slots: make(chan struct{}, 8)}
+	s.timedDetect = http.TimeoutHandler(http.HandlerFunc(s.serve), limits.detection.timeout, timeoutBody)
 	s.gate <- struct{}{}
 	if backend != nil {
 		s.model = backend.Model()
@@ -116,21 +128,21 @@ func writeError(w http.ResponseWriter, err error) {
 	}
 	writeJSON(w, e.Status, map[string]any{"error": map[string]string{"code": e.Code, "message": e.Message}})
 }
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if recover() != nil {
 			writeError(w, errors.New("internal request failure"))
 		}
 	}()
 	p := r.URL.Path
-	if strings.HasPrefix(p, "/v1/") && s.key != "" {
+	if (strings.HasPrefix(p, "/v1/") || p == detectPath) && s.key != "" {
 		fields := strings.Fields(r.Header.Get("Authorization"))
 		if len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") || subtle.ConstantTimeCompare([]byte(fields[1]), []byte(s.key)) != 1 {
 			writeError(w, apiError(401, "unauthorized", "A valid Bearer API key is required."))
 			return
 		}
 	}
-	methods := map[string]string{"/health": "GET", "/ready": "GET", "/v1/model": "GET", "/v1/detect": "POST", "/v1/recognize": "POST", "/v1/recognize/batch": "POST"}
+	methods := map[string]string{"/health": "GET", "/ready": "GET", "/v1/model": "GET", "/v1/detect": "POST", detectPath: "POST", "/v1/recognize": "POST", "/v1/recognize/batch": "POST"}
 	method, ok := methods[p]
 	if !ok {
 		writeError(w, apiError(404, "not_found", "Not Found"))
@@ -157,7 +169,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, s.model)
 		return
 	}
-	opts, err := s.options(r, p == "/v1/detect")
+	opts, err := s.options(r, p == "/v1/detect" || p == detectPath)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -186,7 +198,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			defer r.MultipartForm.RemoveAll()
 		}
 		var limit *http.MaxBytesError
-		if guard.exceeded || errors.As(err, &limit) {
+		var readErr net.Error
+		if p == detectPath && errors.As(err, &readErr) && readErr.Timeout() {
+			writeError(w, apiError(503, "detection_timeout", "The detection request timed out."))
+		} else if guard.exceeded || errors.As(err, &limit) {
 			writeError(w, apiError(413, "request_too_large", "The request exceeds the byte limit."))
 		} else {
 			writeError(w, apiError(400, "bad_request", "Invalid multipart request."))
@@ -206,7 +221,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, apiError(400, "bad_request", "Could not read the complete request body."))
+		var readErr net.Error
+		if p == detectPath && errors.As(err, &readErr) && readErr.Timeout() {
+			writeError(w, apiError(503, "detection_timeout", "The detection request timed out."))
+		} else {
+			writeError(w, apiError(400, "bad_request", "Could not read the complete request body."))
+		}
 		return
 	}
 	field := "file"
@@ -220,6 +240,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err = s.acquire(r.Context()); err != nil {
+		if p == detectPath && errors.Is(r.Context().Err(), context.DeadlineExceeded) {
+			err = apiError(503, "detection_timeout", "The detection request timed out.")
+		}
 		writeError(w, err)
 		return
 	}
@@ -276,7 +299,8 @@ func (s *Server) acquire(ctx context.Context) error {
 func (s *Server) options(r *http.Request, detection bool) (Options, error) {
 	options := s.model.Defaults
 	options.DetectionOnly = detection
-	if detection {
+	options.CompactDetection = r.URL.Path == detectPath
+	if detection && !options.CompactDetection {
 		return options, nil
 	}
 	query, err := url.ParseQuery(r.URL.RawQuery)
@@ -285,6 +309,18 @@ func (s *Server) options(r *http.Request, detection bool) (Options, error) {
 	}
 	if err != nil {
 		return invalid()
+	}
+	if options.CompactDetection {
+		if values, ok := query["score_threshold"]; ok {
+			if len(values) != 1 {
+				return invalid()
+			}
+			options.ScoreThreshold, err = strconv.ParseFloat(values[0], 64)
+			if err != nil || !(options.ScoreThreshold > 0 && options.ScoreThreshold <= 1) {
+				return invalid()
+			}
+		}
+		return options, nil
 	}
 	if values, ok := query["top_k"]; ok {
 		if len(values) != 1 {
@@ -356,19 +392,26 @@ func (s *Server) process(upload *multipart.FileHeader, options Options) (map[str
 	if int64(len(data)) > s.limits.MaxUploadBytes {
 		return nil, apiError(413, "file_too_large", "The uploaded file exceeds the byte limit.")
 	}
-	if err = validateImage(data, s.limits.MaxImagePixels); err != nil {
+	maxPixels := s.limits.MaxImagePixels
+	if options.CompactDetection {
+		maxPixels = s.limits.detection.maxPixels
+	}
+	if err = validateImage(data, maxPixels); err != nil {
 		return nil, err
 	}
 	result, err := s.backend.Process(data, options)
 	if err != nil {
 		return nil, err
 	}
-	if result.Width < 1 || result.Height < 1 || int64(result.Width) > s.limits.MaxImagePixels/int64(result.Height) {
+	if result.Width < 1 || result.Height < 1 || int64(result.Width) > maxPixels/int64(result.Height) {
 		return nil, errors.New("invalid core output dimensions")
 	}
 	var faces []json.RawMessage
 	if err = json.Unmarshal(result.Faces, &faces); err != nil || faces == nil {
 		return nil, errors.New("invalid core output faces")
+	}
+	if options.CompactDetection {
+		return map[string]any{"has_face": len(faces) > 0, "face_count": len(faces), "faces": faces}, nil
 	}
 	return map[string]any{"model_id": s.model.ModelID, "image": map[string]any{"filename": safeFilename(upload.Filename), "width": result.Width, "height": result.Height}, "face_count": len(faces), "faces": faces, "processing_ms": math.Round(float64(time.Since(started).Nanoseconds())/1e3) / 1e3}, nil
 }

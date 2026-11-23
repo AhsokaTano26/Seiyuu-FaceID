@@ -1,0 +1,70 @@
+{
+  "primary_model_tag": "models-5cc19e9d5b1a30aa",
+  "data_sha256": "abd99b3b6ae95db06e49ac7886c430903a273793c3bbf60b949595118deb7922",
+  "plot_script_sha256": "38a011564f29ee5080bbb8faa6a021267a651a08ad12e9e469d7afc01ae2f92e",
+  "matplotlib_version": "3.10.9",
+  "numpy_version": "2.5.4",
+  "fonts": {
+    "latin": {
+      "family": "Times New Roman",
+      "file": "Times New Roman.ttf"
+    },
+    "chinese": {
+      "family": "SimSun",
+      "file": "simsun.ttc"
+    }
+  },
+  "figures": {
+    "model_version_metrics": {
+      "outputs": {
+        "png": {
+          "file": "model_version_metrics.png",
+          "sha256": "3b254d04ad9af90c8e6d8ce1d370822ef3cad4b374f64c937343f00fae4cceaa"
+        },
+        "pdf": {
+          "file": "model_version_metrics.pdf",
+          "sha256": "a74ae64bb1590a89fa18116bbc0cc1f6ed430e077fbf1811d076090a79485653"
+        },
+        "svg": {
+          "file": "model_version_metrics.svg",
+          "sha256": "8b25b7c7ff634bf05db66ff74352e8d52fd83cac36e17eb2398128c3c8c62371"
+        }
+      },
+      "glyph_coverage": "passed"
+    },
+    "model606_threshold_outcomes": {
+      "outputs": {
+        "png": {
+          "file": "model606_threshold_outcomes.png",
+          "sha256": "52c1397176ce6dea51e326be7c825401a1088e0cbc99cde01d81c3f1487a7aad"
+        },
+        "pdf": {
+          "file": "model606_threshold_outcomes.pdf",
+          "sha256": "a3496339d469653cc998941c2d32454613b73f8add9b5b29b6e828ed64102f64"
+        },
+        "svg": {
+          "file": "model606_threshold_outcomes.svg",
+          "sha256": "29cf3fb0eca86fc4d20d490a51bfbcfaaf6ce203045524f701a918aea9ff969f"
+        }
+      },
+      "glyph_coverage": "passed"
+    },
+    "model606_sample_support": {
+      "outputs": {
+        "png": {
+          "file": "model606_sample_support.png",
+          "sha256": "91a30f092258f068d3e746088ed758225ce730c88b52fe36b3c2183e15fafd02"
+        },
+        "pdf": {
+          "file": "model606_sample_support.pdf",
+          "sha256": "3001b0afdd0899073a36ab8004e9e3501513e4e6be3aff1bbc81c47f6715f877"
+        },
+        "svg": {
+          "file": "model606_sample_support.svg",
+          "sha256": "af9002a7a2768f107bf2775d6043bf8595298e9fd3b2ab6a72ec0a985c3dd150"
+        }
+      },
+      "glyph_coverage": "passed"
+    }
+  }
+}

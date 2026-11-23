@@ -1,63 +1,65 @@
-# 分类准确率与速度优化记录（2026-10-27）
+# Classification accuracy and speed optimization record (2026-10-27)
 
-本次保留已部署分类头，启用 AdaFace/R50 并行推理。分类头搜索没有得到值得替换现有模型的结果；并行执行在本机降低了特征提取延迟，保留特征顺序、模型权重及 0.95 接受阈值。
+[English](CLASSIFIER_OPTIMIZATION.md) | [简体中文](CLASSIFIER_OPTIMIZATION.zh-CN.md) | [日本語](CLASSIFIER_OPTIMIZATION.ja.md)
 
-## 速度
+This experiment retained the deployed classification head and enabled parallel AdaFace/R50 inference. The classification-head search produced no result worth replacing the existing model. Parallel execution reduced feature-extraction latency on this machine while preserving feature order, model weights, and the 0.95 acceptance threshold.
 
-使用本机 ONNX Runtime CPU，在开发池中固定抽取 16 个不同来源组的裁剪，每组重复三次。两种执行顺序交错，分别预热；分类头概率比较位于计时区间之外。
+## Speed
 
-| 每个骨干的 intra-op 线程数 | 顺序平均耗时 | 并行平均耗时 | 顺序／并行耗时比 |
+Using local ONNX Runtime CPU inference, 16 crops from distinct source groups were fixed from the development pool, with three repetitions per crop. Sequential and parallel execution were interleaved and warmed up separately. Classification-head probability comparisons took place outside the timed interval.
+
+| Intra-op threads per backbone | Sequential mean | Parallel mean | Sequential / parallel time ratio |
 | --- | ---: | ---: | ---: |
 | 1 | 101.31 ms | 56.40 ms | 1.80 |
 | 2 | 78.39 ms | 54.22 ms | 1.45 |
 | 4 | 58.42 ms | 40.47 ms | 1.44 |
 
-采用保留现有每骨干 2 线程的方案：平均特征提取延迟降低 **30.8%**。该设置下 P95 从 86.32 ms 降到 61.04 ms。三种线程设置各自的顺序／并行输出均逐元素一致；抽测各 48/48 个 Top-1 一致。未使用 4 线程结果更改默认线程数。本机平台为 macOS 26.6.2、ARM64，ONNX Runtime 1.29.0。
+The adopted configuration kept the existing 2 threads per backbone and reduced mean feature-extraction latency by **30.8%**. P95 fell from 86.32 ms to 61.04 ms. Sequential and parallel outputs were elementwise identical under each of the three thread settings, with 48/48 sampled Top-1 results matching for each setting. The 4-thread measurements were not used to change the default thread count. The local platform was macOS 26.6.2, ARM64, with ONNX Runtime 1.29.0.
 
-这里只测对齐后裁剪的双骨干特征提取，不包含图片解码、人脸检测、质量检查或 HTTP 开销；不将它表述为整个 API 的吞吐量提升。结果来自本机，Linux 或 CPU 配额不同的机器需重测。
+These timings cover dual-backbone feature extraction from aligned crops. Image decoding, face detection, quality checks, and HTTP overhead are outside their scope, so they do not establish an increase in whole-API throughput. The results are local to this machine and require new measurements on Linux or machines with different CPU quotas.
 
-配置项为 `runtime.parallel_backbones`。随附 `configs/default.yaml` 设为 `true`；旧配置缺少该项时保持顺序模式。两个模型各 2 个 intra-op 线程，并行时合计约 4 个计算线程；资源受限时可设为 `false`。执行器持久复用，在 API 关闭时显式释放；单个骨干失败时等待两项任务完成，再传播异常。
+The configuration field is `runtime.parallel_backbones`. The bundled `configs/default.yaml` sets it to `true`. Older configurations that omit it retain sequential execution. Each model has 2 intra-op threads, giving approximately 4 compute threads in parallel mode. Resource-constrained environments can set it to `false`. The executor is reused persistently and explicitly released when the API shuts down. If one backbone fails, both tasks are awaited before propagating the exception.
 
-接入实际运行时后，又对全部 **1,051 张历史留出裁剪**交错执行原顺序计算与新并行计算：
+After integration into the actual runtime, the original sequential and new parallel computations were interleaved over all **1,051 historical holdout crops**.
 
-- 特征与分类概率均逐元素完全一致，Top-1 和 0.95 阈值下的接受／复核结果均与历史记录一致。
-- Top-1 仍为 **1,035/1,051＝98.48%**，Top-5 99.14%，Macro-F1 99.10%。已部署分类头 SHA-256 未变。
-- 全量特征提取平均耗时 **77.61 → 52.12 ms（降低 32.8%）**；P95 **79.35 → 55.40 ms**。这仍是裁剪级特征提取计时，包含首个观测，不含检测或 HTTP。
-- 新提取特征相对保存的冻结特征最大差异为 `9.16e-7`，概率相对历史保存值最大差异为 `3.52e-6`；这些历史数值差异在顺序和并行模式中完全相同，没有改变身份或接受结果。
+- Features and classification probabilities were fully elementwise identical. Top-1 and acceptance/review decisions at the 0.95 threshold matched historical records.
+- Top-1 remained **1,035/1,051 = 98.48%**, Top-5 99.14%, and Macro-F1 99.10%. The deployed classification-head SHA-256 was unchanged.
+- Full-set mean feature-extraction time changed from **77.61 → 52.12 ms, a 32.8% reduction**, with P95 **79.35 → 55.40 ms**. These remain crop-level feature-extraction timings, including the first observation and excluding detection or HTTP.
+- Relative to saved frozen features, newly extracted features differed by at most `9.16e-7`. Probabilities differed from historical saved values by at most `3.52e-6`. These historical numerical differences were identical in sequential and parallel modes and did not change identity or acceptance results.
 
-## 分类头实验
+## Classification-head experiment
 
-数据共 5,115 张审核人脸、50 个身份。原训练和验证合并为 4,064 张开发样本；1,051 张历史测试人脸不参与本轮训练、标准化或候选选择。
+The data comprised 5,115 reviewed faces and 50 identities. The original training and validation sets were merged into 4,064 development samples. The 1,051 historical test faces were excluded from this round of training, standardization, and candidate selection.
 
-开发池共有 2,513 个来源组件。组件合并 `sample_id`、`source_group`、原图 SHA、裁剪 SHA 和可选写真集分组，检查传递重复关系及开发／测试隔离。两个身份各只有一个来源组件，始终放入训练，排除 OOF 指标；OOF 因而覆盖 4,062 张、48 个身份。每折训练仍含全部 50 个身份。
+The development pool contained 2,513 source components. Components combined `sample_id`, `source_group`, original-image SHA, crop SHA, and optional photo-book grouping to check transitive duplication and development/test isolation. Two identities each had only one source component. They always remained in training and were excluded from OOF metrics, so OOF covered 4,062 faces and 48 identities. Every training fold still contained all 50 identities.
 
-候选列表和选择规则在运行前落盘：
+The candidate list and selection rule were saved before the run.
 
-- 标准化 LR：6 个 C × 2 种类别权重 × 3 种 AdaFace/R50 权重，共 36 组。
-- 不标准化 LR：4 个 C × 2 种类别权重，共 8 组。
-- 来源组件等权 LR：3 个 C × 2 种类别权重，共 6 组。类别平衡按组件数计算，避免重复叠加基于裁剪数的权重。
+- Standardized LR used 6 C values × 2 class-weight options × 3 AdaFace/R50 weights, giving 36 configurations.
+- Unstandardized LR used 4 C values × 2 class-weight options, giving 8 configurations.
+- Source-component-equal-weight LR used 3 C values × 2 class-weight options, giving 6 configurations. Class balancing was calculated by component count to avoid applying crop-count-based weights again.
 
-三折按来源组件隔离，预处理仅在当前训练折拟合。按合并 OOF Top-1、受支持类别 Macro-F1、对数损失依次比较；固定候选次序作最终并列规则。选中配置先落盘，之后只检查该候选和基线，未根据后续结果切换到其他候选。
+Three folds were isolated by source component, with preprocessing fitted only on the current training fold. Candidates were ranked by pooled OOF Top-1, supported-class Macro-F1, then log loss. Fixed candidate order was the final tie-breaker. The selected configuration was saved first. Only that candidate and the baseline were subsequently examined, without switching to another candidate based on later results.
 
-胜出配置是标准化 LR，`C=0.1`、`class_weight=balanced`、AdaFace 权重 0.75。块权重在标准化后生效并折入导出的缩放参数；现有 NumPy 运行时可直接读取。其导出概率与训练实现的最大误差为 0。
+The winning configuration was standardized LR with `C=0.1`, `class_weight=balanced`, and AdaFace weight 0.75. Block weights took effect after standardization and were folded into the exported scaling parameters, which the existing NumPy runtime could read directly. Its exported probabilities had a maximum error of 0 against the training implementation.
 
-| 评估范围 | 当前分类头 | 新候选 |
+| Evaluation scope | Current head | New candidate |
 | --- | ---: | ---: |
-| 选择用 OOF，种子 20261027 | 3,977/4,062（97.91%） | 3,986/4,062（98.13%） |
-| 第二划分 OOF，种子 20261028 | 3,981/4,062（98.01%） | 3,988/4,062（98.18%） |
-| 历史测试 Top-1 | 1,035/1,051（98.48%） | 1,033/1,051（98.29%） |
-| 历史测试来源组件宏平均准确率 | 98.65% | 98.36% |
-| 历史测试 Macro-F1（49 个有真值的身份） | 99.10% | 96.96% |
-| 历史测试 0.95 阈值接受数 | 1,011 | 986 |
-| 其中错误接受数 | 4 | 4 |
+| Selection OOF, seed 20261027 | 3,977/4,062 (97.91%) | 3,986/4,062 (98.13%) |
+| Second-split OOF, seed 20261028 | 3,981/4,062 (98.01%) | 3,988/4,062 (98.18%) |
+| Historical test Top-1 | 1,035/1,051 (98.48%) | 1,033/1,051 (98.29%) |
+| Historical test source-component macro-average accuracy | 98.65% | 98.36% |
+| Historical test Macro-F1, 49 identities with ground truth | 99.10% | 96.96% |
+| Historical test accepted at threshold 0.95 | 1,011 | 986 |
+| Incorrectly accepted among them | 4 | 4 |
 
-候选未修正当前头的 16 个历史错误，额外增加 2 个错误；人工复核从 40 张增加到 65 张。因此保留原分类头。
+The candidate corrected none of the current head's 16 historical errors and introduced 2 additional errors. The number requiring human review rose from 40 to 65. The original head was therefore retained.
 
-50 个候选共用 OOF，最优 OOF 分数有选择偏差。第二划分复用同一批样本，不是独立测试。历史测试集也曾参与此前模型选择，本轮数字仍属于探索性比较，不能称为新的泛化证明。历史测试有 676 个来源组件，其中五个组件包含 380 张脸，所以同时记录组件宏平均指标；不把每张裁剪都当作独立样本。配对组件 bootstrap（10,000 次，种子 20261029）得到候选 Top-1 变化的描述性 95% 区间为 −0.545 至 0.000 个百分点，不修正此前的选择偏差。
+All 50 candidates shared the OOF data, introducing selection bias into the best OOF score. The second split reused the same samples and was not an independent test. The historical test set had also participated in earlier model selection, so these numbers remain exploratory comparisons and do not provide new evidence of generalization. The historical test set contained 676 source components, five of which accounted for 380 faces. Component-macro metrics were recorded as well, without treating every crop as independent. A paired component bootstrap with 10,000 repetitions and seed 20261029 yielded a descriptive 95% interval of −0.545 to 0.000 percentage points for the candidate's Top-1 change. This does not correct earlier selection bias.
 
-未知人物、角色图拒识没有新增有真值的数据，本次不声称改善相关准确率。后续若继续提升准确率，应补充独立来源的已审核照片和新的测试集，再验证特征或分类器变更。
+No new ground-truth data were added for rejection of unknown people or character images, and no improvement in those accuracies is claimed. Further accuracy work should add reviewed photos from independent sources and a new test set before validating feature or classifier changes.
 
-## 复现和本地证据
+## Reproduction and local evidence
 
 ```bash
 uv run --extra training python tools/optimize_classifier.py --output data/experiments/new-head-search
@@ -67,12 +69,12 @@ uv run pytest
 uv run ruff check .
 ```
 
-输出路径必须不存在。模型与详细实验数据继续保留在忽略目录，不进入仓库或 Release：
+Output paths must not already exist. Models and detailed experimental data remain in ignored directories and are excluded from the repository and Releases.
 
-- `data/experiments/classifier-search-20261027/`：协议、候选记录、锁定配置、确认结果、独立候选头、历史概率和比较结果。
-- `data/experiments/classifier_speed_20261027.json`：开发裁剪的交错测速和逐元素一致性。
-- `data/experiments/runtime-parallel-20261027/`：实际并行运行时的全量留出复核脚本和结果。
+- `data/experiments/classifier-search-20261027/` contains the protocol, candidate records, locked configuration, confirmation results, separate candidate head, historical probabilities, and comparisons.
+- `data/experiments/classifier_speed_20261027.json` contains interleaved development-crop timings and elementwise parity checks.
+- `data/experiments/runtime-parallel-20261027/` contains full-holdout verification scripts and results for the actual parallel runtime.
 
-代码验证：131 项测试通过，Ruff 和 `git diff --check` 通过。测试覆盖组件泄漏、单例身份、候选选择不受历史特征影响、导出一致性、真实双线程重叠、错误传播前等待、重复关闭和 API 资源释放。测试输出有两条现存的 Starlette/httpx/AnyIO 弃用警告。
+Code validation passed 131 tests, Ruff, and `git diff --check`. Tests cover component leakage, singleton identities, candidate selection independent of historical features, export parity, actual overlap of two threads, awaiting completion before propagating errors, repeated shutdown, and API resource cleanup. Test output contained two existing Starlette/httpx/AnyIO deprecation warnings.
 
-实验方法参考 [scikit-learn 分组交叉验证](https://scikit-learn.org/stable/modules/cross_validation.html)；每模型线程数与 CPU 资源取舍参考 [ONNX Runtime 线程管理](https://onnxruntime.ai/docs/performance/tune-performance/threading.html)。
+The experimental method references [scikit-learn grouped cross-validation](https://scikit-learn.org/stable/modules/cross_validation.html). Per-model thread counts and CPU resource tradeoffs reference [ONNX Runtime threading](https://onnxruntime.ai/docs/performance/tune-performance/threading.html).

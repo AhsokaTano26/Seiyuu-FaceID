@@ -44,6 +44,13 @@ func (b *fakeBackend) Process(data []byte, o Options) (CoreResult, error) {
 	if b.fail != nil {
 		return CoreResult{}, b.fail
 	}
+	if o.CompactDetection {
+		faces := json.RawMessage(`[{"bbox":[0,0,1,2],"detector_score":0.75}]`)
+		if o.ScoreThreshold > 0.75 {
+			faces = json.RawMessage("[]")
+		}
+		return CoreResult{Width: 2, Height: 3, Faces: faces}, nil
+	}
 	return CoreResult{Width: 2, Height: 3, Faces: json.RawMessage(`[{"status":"review","identity":null,"candidates":[]}]`)}, nil
 }
 func (b *fakeBackend) Close() error { b.closed.Add(1); return nil }
@@ -316,5 +323,139 @@ func TestMalformedMultipart(t *testing.T) {
 	r.Header.Set("Content-Type", "multipart/form-data; boundary=bad")
 	if w := serve(s, r); w.Code != 400 {
 		t.Fatal(w.Code)
+	}
+}
+
+func TestInternalDetection(t *testing.T) {
+	b := &fakeBackend{}
+	s := New(b, "secret", DefaultLimits())
+	for _, tc := range []struct {
+		addr, key, query string
+		status           int
+	}{
+		{"127.0.0.1:4321", "", "", 401},
+		{"8.8.8.8:4321", "secret", "", 403},
+		{"127.0.0.1:4321", "secret", "?score_threshold=nan", 422},
+		{"127.0.0.1:4321", "secret", "?score_threshold=0.75", 200},
+	} {
+		r := uploadRequest(t, "/api/v1/detect"+tc.query, "file", [][]byte{pngData()})
+		r.RemoteAddr = tc.addr
+		r.Header.Set("Authorization", "Bearer "+tc.key)
+		r.Header.Set("X-Forwarded-For", "127.0.0.1")
+		w := serve(s, r)
+		if w.Code != tc.status {
+			t.Fatalf("%s: %d %s", tc.addr, w.Code, w.Body.String())
+		}
+		if w.Code == 200 {
+			var body map[string]any
+			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if body["has_face"] != true || body["face_count"] != float64(1) || len(body) != 3 || !b.seenOptions[0].DetectionOnly || b.seenOptions[0].ScoreThreshold != 0.75 {
+				t.Fatal(body, b.seenOptions)
+			}
+		}
+	}
+}
+
+func TestInternalDetectionDeadline(t *testing.T) {
+	t.Setenv("SEIYUU_FACEID_DETECT_TIMEOUT_MS", "75")
+	b := &fakeBackend{started: make(chan struct{}), release: make(chan struct{})}
+	limits, err := LimitsFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(b, "", limits)
+	defer close(b.release)
+	req := func() *http.Request {
+		r := uploadRequest(t, "/api/v1/detect", "file", [][]byte{pngData()})
+		r.RemoteAddr = "127.0.0.1:1234"
+		return r
+	}
+	first := make(chan *httptest.ResponseRecorder, 1)
+	go func() { first <- serve(s, req()) }()
+	select {
+	case <-b.started:
+	case <-time.After(time.Second):
+		t.Fatal("detection did not start")
+	}
+	select {
+	case w := <-first:
+		if w.Code != 503 || errorCode(t, w) != "detection_timeout" {
+			t.Fatal(w.Code, w.Body.String())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("inference exceeded deadline")
+	}
+	w := serve(s, req())
+	if w.Code != 503 || errorCode(t, w) != "detection_timeout" || b.calls.Load() != 1 {
+		t.Fatal(w.Code, w.Body.String(), b.calls.Load())
+	}
+}
+
+func TestInternalSubnetAndImageLimits(t *testing.T) {
+	t.Setenv("SEIYUU_FACEID_DETECT_CLIENT_CIDR", "172.29.0.0/24")
+	t.Setenv("SEIYUU_FACEID_DETECT_MAX_PIXELS", "5")
+	limits, err := LimitsFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &fakeBackend{}
+	s := New(b, "", limits)
+	for _, tc := range []struct {
+		route, peer string
+		data        []byte
+		status      int
+		code        string
+	}{
+		{detectPath, "172.29.0.2:7777", pngData(), 413, "image_too_large"},
+		{detectPath, "172.30.0.2:7777", pngData(), 403, "internal_only"},
+		{detectPath, "172.29.0.2:7777", []byte("bad"), 400, "invalid_image"},
+		{"/v1/detect", "172.29.0.2:7777", pngData(), 200, ""},
+	} {
+		r := uploadRequest(t, tc.route, "file", [][]byte{tc.data})
+		r.RemoteAddr = tc.peer
+		w := serve(s, r)
+		if w.Code != tc.status || (tc.code != "" && errorCode(t, w) != tc.code) {
+			t.Fatal(w.Code, w.Body.String())
+		}
+	}
+	if b.calls.Load() != 1 {
+		t.Fatal(b.calls.Load())
+	}
+}
+
+func TestInternalDeadlineIncludesUpload(t *testing.T) {
+	t.Setenv("SEIYUU_FACEID_DETECT_TIMEOUT_MS", "100")
+	limits, err := LimitsFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &fakeBackend{}
+	server := httptest.NewServer(New(b, "", limits))
+	defer server.Close()
+	reader, writer := io.Pipe()
+	defer writer.Close()
+	req, err := http.NewRequest("POST", server.URL+detectPath, reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "multipart/form-data; boundary=slow")
+	go func() {
+		_, _ = io.WriteString(writer, "--slow\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.png\"\r\n\r\n")
+	}()
+	client := server.Client()
+	client.Timeout = time.Second * 2
+	res, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var payload struct{ Error struct{ Code string } }
+	if err = json.NewDecoder(res.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != 503 || payload.Error.Code != "detection_timeout" || b.calls.Load() != 0 {
+		t.Fatal(res.StatusCode, payload, b.calls.Load())
 	}
 }

@@ -25,6 +25,10 @@ class DetectorError(RuntimeError):
     """Raised when a detector does not provide the expected interface."""
 
 
+class ImageAspectError(ValueError):
+    """Resizing this image to the detector canvas would collapse one dimension."""
+
+
 def _nms(boxes: np.ndarray, scores: np.ndarray, threshold: float) -> np.ndarray:
     if boxes.size == 0:
         return np.empty(0, dtype=np.int64)
@@ -97,7 +101,9 @@ class SCRFDDetector:
                 f"found {len(self.output_names)}. Use a *_KPS SCRFD export."
             )
 
-    def detect(self, image_bgr: np.ndarray) -> list[FaceDetection]:
+    def detect(
+        self, image_bgr: np.ndarray, *, score_threshold: float | None = None
+    ) -> list[FaceDetection]:
         """Detect faces after bounded resize and letterbox; map results to source pixels."""
         import cv2
 
@@ -108,22 +114,26 @@ class SCRFDDetector:
         canvas, scale, pad_x, pad_y = self._letterbox(working)
         blob = cv2.dnn.blobFromImage(canvas, 1 / 128.0, self.input_size, (127.5,) * 3, swapRB=True)
         outputs = self.session.run(self.output_names, {self.input_name: blob})
-        boxes, scores, landmarks = self._decode(outputs, canvas.shape[1], canvas.shape[0])
+        boxes, scores, landmarks = self._decode(
+            outputs, canvas.shape[1], canvas.shape[0], score_threshold=score_threshold
+        )
         if not len(boxes):
             return []
         keep = _nms(boxes, scores, self.nms_threshold)
-        mapped: list[FaceDetection] = []
-        for index in keep:
-            bbox = boxes[index].copy()
-            points = landmarks[index].copy()
-            bbox[[0, 2]] = (bbox[[0, 2]] - pad_x) / scale / resize_scale
-            bbox[[1, 3]] = (bbox[[1, 3]] - pad_y) / scale / resize_scale
-            points[:, 0] = (points[:, 0] - pad_x) / scale / resize_scale
-            points[:, 1] = (points[:, 1] - pad_y) / scale / resize_scale
-            bbox[[0, 2]] = np.clip(bbox[[0, 2]], 0, original_width - 1)
-            bbox[[1, 3]] = np.clip(bbox[[1, 3]], 0, original_height - 1)
-            mapped.append(FaceDetection(bbox=bbox, score=float(scores[index]), landmarks=points))
-        return mapped
+        boxes = boxes[keep]
+        points = landmarks[keep]
+        boxes -= np.array([pad_x, pad_y, pad_x, pad_y], dtype=np.float32)
+        points -= np.array([pad_x, pad_y], dtype=np.float32)
+        boxes /= scale
+        boxes /= resize_scale
+        points /= scale
+        points /= resize_scale
+        np.clip(boxes[:, ::2], 0, original_width - 1, out=boxes[:, ::2])
+        np.clip(boxes[:, 1::2], 0, original_height - 1, out=boxes[:, 1::2])
+        return [
+            FaceDetection(bbox, float(score), keypoints)
+            for bbox, score, keypoints in zip(boxes, scores[keep], points, strict=True)
+        ]
 
     def _bounded_resize(self, image_bgr: np.ndarray) -> tuple[np.ndarray, float]:
         import cv2
@@ -133,7 +143,10 @@ class SCRFDDetector:
         if long_edge <= self.max_long_edge:
             return image_bgr, 1.0
         scale = self.max_long_edge / long_edge
-        resized = cv2.resize(image_bgr, (round(width * scale), round(height * scale)))
+        size = (round(width * scale), round(height * scale))
+        if min(size) < 1:
+            raise ImageAspectError("Image aspect ratio is unsupported.")
+        resized = cv2.resize(image_bgr, size)
         return resized, scale
 
     def _letterbox(self, image_bgr: np.ndarray) -> tuple[np.ndarray, float, int, int]:
@@ -143,6 +156,8 @@ class SCRFDDetector:
         height, width = image_bgr.shape[:2]
         scale = min(target_width / width, target_height / height)
         resized_width, resized_height = round(width * scale), round(height * scale)
+        if min(resized_width, resized_height) < 1:
+            raise ImageAspectError("Image aspect ratio is unsupported.")
         resized = cv2.resize(image_bgr, (resized_width, resized_height))
         canvas = np.zeros((target_height, target_width, 3), dtype=np.uint8)
         pad_x = (target_width - resized_width) // 2
@@ -151,15 +166,18 @@ class SCRFDDetector:
         return canvas, scale, pad_x, pad_y
 
     def _decode(
-        self, outputs: list[np.ndarray], input_width: int, input_height: int
+        self,
+        outputs: list[np.ndarray],
+        input_width: int,
+        input_height: int,
+        *,
+        score_threshold: float | None = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         all_boxes: list[np.ndarray] = []
         all_scores: list[np.ndarray] = []
         all_landmarks: list[np.ndarray] = []
         for level, stride in enumerate(self._STRIDES):
             scores = np.asarray(outputs[level]).reshape(-1)
-            distances = np.asarray(outputs[level + 3]).reshape(-1, 4) * stride
-            keypoint_distances = np.asarray(outputs[level + 6]).reshape(-1, 5, 2) * stride
             feature_width = input_width // stride
             feature_height = input_height // stride
             locations = feature_width * feature_height
@@ -168,17 +186,16 @@ class SCRFDDetector:
                     "SCRFD output shapes do not match the configured detector input size."
                 )
             anchors = scores.size // locations
-            centers = np.stack(np.mgrid[:feature_height, :feature_width][::-1], axis=-1).reshape(
-                -1, 2
+            threshold = (
+                self.score_threshold if score_threshold is None else np.float64(score_threshold)
             )
-            centers = np.repeat(centers, anchors, axis=0).astype(np.float32) * stride
-            if centers.shape[0] != scores.size:
-                raise DetectorError("Could not align SCRFD anchors with output tensors.")
-            selected = np.flatnonzero(scores >= self.score_threshold)
+            selected = np.flatnonzero(scores >= threshold)
             if not selected.size:
                 continue
-            center = centers[selected]
-            distance = distances[selected]
+            cells = selected // anchors
+            center = np.column_stack((cells % feature_width, cells // feature_width))
+            center = center.astype(np.float32) * stride
+            distance = np.asarray(outputs[level + 3]).reshape(-1, 4)[selected] * stride
             box = np.column_stack(
                 (
                     center[:, 0] - distance[:, 0],
@@ -187,7 +204,8 @@ class SCRFDDetector:
                     center[:, 1] + distance[:, 3],
                 )
             )
-            points = keypoint_distances[selected] + center[:, None, :]
+            offsets = np.asarray(outputs[level + 6]).reshape(-1, 5, 2)[selected]
+            points = offsets * stride + center[:, None, :]
             all_boxes.append(box)
             all_scores.append(scores[selected])
             all_landmarks.append(points)

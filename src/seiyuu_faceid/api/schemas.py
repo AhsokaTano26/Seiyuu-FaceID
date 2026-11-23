@@ -77,9 +77,18 @@ class RecognitionFace(ResponseModel):
     candidates: list[CandidateResponse]
 
 
-class DetectionFace(ResponseModel):
+class DetectionBox(ResponseModel):
     bbox: Box
     detector_score: float
+
+
+class PresenceResponse(ResponseModel):
+    has_face: bool
+    face_count: int = Field(ge=0)
+    faces: list[DetectionBox]
+
+
+class DetectionFace(DetectionBox):
     landmarks: tuple[Point, Point, Point, Point, Point]
 
 

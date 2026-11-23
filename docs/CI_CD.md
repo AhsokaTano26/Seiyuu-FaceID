@@ -1,96 +1,131 @@
-# CI/CD：三种部署方式与模型发布
+# CI/CD with three deployment options and model releases
 
-工作流见 [ci.yml](../.github/workflows/ci.yml)。推送到 main、推送 v*.*.* 版本标签，
-或在 main 手动运行后，先检查代码，再交付以下内容。Pull Request 只构建和检查，
-不发布镜像、部署附件或模型。
+[English](CI_CD.md) | [简体中文](CI_CD.zh-CN.md) | [日本語](CI_CD.ja.md)
 
-| 交付方式 | 下载位置 | 内容与平台 |
+See the [ci.yml workflow](../.github/workflows/ci.yml).
+A push to main, a v*.*.* version tag, or a manual run on main checks the code and then delivers the following artifacts.
+Pull requests only build and validate. They do not publish images, deployment attachments, or models.
+Publishing a `models-<content-digest>` Release also starts deployment CI for that model and the current main application revision.
+
+| Delivery | Download location | Contents and platforms |
 | --- | --- | --- |
-| Docker Compose | Actions 的 seiyuu-faceid-docker-提交SHA 产物；镜像在 Docker Hub | Compose、普通/N150 配置、固定镜像标签、模型下载工具；Linux amd64/arm64 |
-| Python 原生 | Actions 的 seiyuu-faceid-python-提交SHA 产物 | Python 源码、uv.lock、配置、systemd 模板、模型下载工具；CI 检查 Linux amd64 |
-| C++ / Go 原生 | Actions 的 seiyuu-faceid-native-linux-amd64-提交SHA 产物 | Linux amd64 可执行文件、共享库、许可证、FTZ 与兼容 JSON、systemd 模板、模型下载工具 |
-| 模型 | GitHub Releases 的 models-内容摘要 版本 | ONNX 权重、分类头及必要元信息，独立于应用版本 |
+| Docker Compose | Actions artifact `seiyuu-faceid-docker-<commit-sha>`, with the commit SHA. Images are on Docker Hub | Compose, standard/N150 configuration, fixed image tag, model downloader. Linux amd64/arm64 |
+| Native Python | Actions artifact `seiyuu-faceid-python-<commit-sha>`, with the commit SHA | Python source, uv.lock, configuration, systemd template, model downloader. CI checks Linux amd64 |
+| Native C++ / Go | Actions artifact `seiyuu-faceid-native-linux-amd64-<commit-sha>`, with the commit SHA | Linux amd64 executables, shared libraries, licenses, FTZ and compatible JSON exports, systemd template, model downloader |
+| Models | GitHub Releases version `models-<content-digest>`, using a content digest | ONNX weights, classification head, and required metadata, independent of the application version |
 
-三种部署包均附归档 SHA-256 和包内 SHA256SUMS。进入对应 Actions 运行页面底部的
-Artifacts 下载，先解开外层下载文件，再按包中 README.md 操作。部署归档保留 14 天；
-需要长期保存时自行下载归档，或从仓库复现构建。构建产物的使用方式见
-[GitHub 官方说明](https://docs.github.com/en/actions/tutorials/store-and-share-data)。
+All three deployment bundles include an archive SHA-256 and an internal SHA256SUMS file.
+Download from Artifacts at the bottom of the corresponding Actions run page, unpack the outer download first, then follow the bundled README.md.
+Deployment archives are retained for 14 days. Download and retain them yourself for long-term storage, or reproduce the build from the repository.
+See [GitHub's artifact documentation](https://docs.github.com/en/actions/tutorials/store-and-share-data) for artifact usage.
 
-部署包不重复携带约 400 MB ONNX 模型。它们都附带 release/model-source.json，
-固定下载地址、整个归档摘要、允许的成员及每个文件的摘要和大小。
-下载工具拒绝多余文件、路径穿越、链接、损坏模型以及覆盖不同的现有权重。
-首次下载使用 Python 3.11+ 的标准库；也可以在另一台机器准备 models/ 后复制。
-这是安装准备步骤，C++ / Go 服务运行时不需要 Python。离线时使用：
+Deployment bundles do not duplicate the approximately 400 MB ONNX models.
+Each includes release/model-source.json, pinning the download URL, archive digest, allowed members, and each file's digest and size.
+The downloader rejects extra files, path traversal, links, corrupt models, and overwriting different existing weights.
+Initial download uses the Python 3.11+ standard library. Alternatively, prepare models/ on another machine and copy it over.
+This is an installation preparation step. The C++ / Go runtime does not require Python.
+For offline installation, use the following command.
 
 ~~~bash
 python3 tools/fetch_models.py --archive /路径/模型归档.tar.gz
 ~~~
 
-当前模型由既有 v0.1.0 的模型专用附件引导获取，不下载该版本的历史部署附件。
-所有方式使用同一组 FP32 权重、分类头和识别阈值。模型文件需遵守随附的上游条款。
+Normal code builds use the checked-in model source, currently bootstrapped from the existing v0.1.0 release.
+Model-release builds pin the newly published Release instead. All jobs share verified `model-inputs` containing the source lock and training aggregate.
+Historical deployment attachments from that release are not downloaded.
+All deployment methods use the same FP32 weights, classification head, and recognition thresholds.
+Follow the accompanying upstream terms when using the model files.
 
-## 检查与发布顺序
+<a id="检查与发布顺序"></a>
 
-1. quality：锁定依赖检查、Ruff、全部 Python 测试、编译检查和 actionlint。
-2. deployments：获取并核对模型及训练统计，生成 Python 和 Compose 包；解压到新目录后，
-   实际启动 Python HTTP 服务，检查就绪、鉴权、模型标识、检测与识别；验证两套 Compose。
-3. native：在 Ubuntu 22.04 构建 C++ / Go，执行 CTest、普通和 native Go 测试；
-   导出兼容及 FTZ 参数；用固定随机人脸裁剪比较 Python/C++ 的特征、概率和判定；
-   打包后在新目录启动原生 HTTP 服务并检查接口。
-4. docker：前置检查通过后，构建并发布 Python API 的 Linux amd64/arm64 镜像。
-5. models：等待前述任务全部成功后，生成并发布模型专用 Release。
+## Validation and publication order
 
-随机裁剪比较用于实现回归检查，不构成准确率评测。真实数据准确率见
-[标准数据集准确率报告](STANDARD_DATASET_ACCURACY.md)。原生运行时基于 glibc，
-不是静态单文件程序；Ubuntu 22.04 构建提供 glibc 2.35 基线，其他系统需核对动态库兼容性。
-默认 native-model.json 开启 Linux x86_64 FTZ/DAZ；
-native-compatible.json 关闭该模式。保留相对模型目录布局及各 JSON 的 .sha256 文件。
+1. prepare selects the application commit and model inputs. For model Releases it verifies the asset allowlist, GitHub digests, SHA256SUMS, archive content tag, safe members, matching inner/outer metadata, classifier labels, and actual training counts before distributing the source lock.
+2. quality checks locked dependencies, Ruff, all Python tests, compilation, and actionlint.
+3. deployments retrieves and verifies models and training statistics, then generates Python and Compose bundles. After extracting into a fresh directory, it starts the Python HTTP service and checks readiness, authentication, model identifiers, detection, and recognition. Both Compose configurations are validated.
+4. native builds C++ / Go on Ubuntu 22.04 and runs CTest, ordinary Go tests, and native Go tests. It exports compatible and FTZ parameters and compares Python/C++ features, probabilities, and decisions on fixed random face crops. After packaging, it starts the native HTTP service in a fresh directory and checks its endpoints.
+5. docker builds and publishes Linux amd64/arm64 images for the Python API after prerequisite checks pass.
+6. models runs only for application builds. After all preceding jobs succeed, it generates or verifies a model-only Release and explicitly requests model deployment CI. Model-triggered builds finish with deployment delivery, preventing a publication loop.
 
-Docker 镜像标签包括 main 的 latest、完整提交的 sha-标签和版本标签对应的语义版本。
-部署包默认指向本次提交的 sha-标签；现有 Docker 镜像运行 Python API，没有原生 FTZ 路径。
-C++ / Go 原生包默认只有 API，上传首页和 /docs 属于 Python 方案。
+Random-crop comparisons check implementation regressions. They do not evaluate recognition accuracy.
+For accuracy on real data, see the [standard dataset accuracy report](STANDARD_DATASET_ACCURACY.md).
+The native runtime uses glibc and requires shared libraries. Ubuntu 22.04 builds provide a glibc 2.35 baseline.
+Check dynamic library compatibility on other systems.
+The default native-model.json enables Linux x86_64 FTZ/DAZ, while native-compatible.json disables it.
+Preserve the relative model directory layout and each JSON file's .sha256 file.
 
-## 模型 Release 的边界
+Docker image tags include latest for main, a sha- tag with the full commit, and the semantic version corresponding to a version tag.
+Deployment bundles default to the current commit's sha- tag.
+Model builds also publish a Docker `models-<content-digest>` tag and append that model tag to Actions artifact names. Their internal archive names retain the application commit. `BUILD.json` and `release/model-source.json` bind the exact model archive digest.
+Only ordinary main builds update `latest`. Models are mounted from the separately downloaded, verified model directory.
+Existing Docker images run the Python API without the native FTZ path.
+Native C++ / Go bundles provide the API only by default. The upload homepage and /docs belong to the Python option.
 
-AGENTS.md 的发布约定继续适用。附件严格限定为：
+<a id="模型-release-的边界"></a>
 
-- seiyuu-faceid-models.tar.gz：models/ 目录中的模型与必要元信息。
-- SHA256SUMS：以上归档及配套附件的校验。
-- TRAINING_SAMPLES.csv：全部模型内置姓名及实际拟合样本数。
-- TRAINING_PROVENANCE.json：分类头摘要、冻结特征/划分文件的摘要及汇总统计。
-- MODEL_LICENSES.md：模型来源和上游使用条款。
+## Model Release scope
 
-不上传应用代码、部署归档、Compose、API 文档、照片、原始特征或评测数据。
-Release 说明以模型下载、模型范围和完整身份/样本数表为主。
-当前统计为 50 个身份、4,064 张实际拟合裁剪：
-3,574 张原训练集 + 490 张原验证集，排除 1,051 张测试集。
-统计从本地当前模型使用的冻结划分导出，并与原发布 CSV、分类头标签顺序及哈希绑定核对。
-CI 只接触公开汇总统计，不下载训练特征。
+The release rules in AGENTS.md remain in effect. Attachments are limited to the following files.
 
-模型归档固定时间戳、文件顺序、权限和所有者信息，用归档 SHA-256 的前 16 位作为模型版本。
-相同归档复用已有发布；应用代码单独变化不会重复上传权重。
-新增发布先建立草稿、上传白名单文件，校验远端每个附件的大小和 GitHub 摘要后才公开。
-失败留下草稿，可重跑补齐缺失附件；上传中断留下的零字节 starter 占位，
-仅在草稿且名称属于白名单时清理重传。不同内容的已有附件和不完整的已公开版本会报错，
-不会覆盖或静默修复。
+- seiyuu-faceid-models.tar.gz contains models and required metadata from models/.
+- SHA256SUMS provides checksums for that archive and accompanying attachments.
+- TRAINING_SAMPLES.csv lists every model-embedded name and actual fitting sample count.
+- TRAINING_PROVENANCE.json records the classification head digest, frozen feature/split file digests, and aggregate statistics.
+- MODEL_LICENSES.md describes model sources and upstream usage terms.
 
-## 凭据与后续更新
+Do not upload application code, deployment archives, Compose, API documentation, photos, raw features, or evaluation data.
+Release notes focus on model downloads, scope, and the complete identity/sample-count table.
+The checked-in source statistics are 50 identities and 4,064 crops actually used for fitting.
+These comprise 3,574 crops from the original training set plus 490 from the original validation set, excluding 1,051 test crops.
+Statistics are exported from the frozen split used by the current local model and checked against the original release CSV, classifier label order, and hash bindings.
+CI accesses only public aggregate statistics and does not download training features.
 
-仓库需要 DOCKERHUB_TOKEN Secret，供 tano26/seiyuu-faceid 镜像发布使用。
-模型发布使用 Actions 自带 GITHUB_TOKEN，仅 models 任务声明 contents: write；
-其他任务只读，不需要另存 GitHub 长期密钥。流水线不会 SSH 到服务器或自动替换正在运行的服务。
+Model archives use fixed timestamps, file order, permissions, and ownership metadata.
+The first 16 hexadecimal characters of the archive SHA-256 form the model version.
+An identical archive reuses its existing release. Changes to application code alone do not upload weights again.
+A new release starts as a draft, uploads only allowlisted files, and becomes public only after each remote attachment's size and GitHub digest are verified.
+A failed run leaves a draft that can be rerun to fill missing attachments.
+Zero-byte starter placeholders from interrupted uploads are removed and reuploaded only when the release is a draft and the filename is allowlisted.
+Existing attachments with different content and incomplete public releases cause errors. They are neither overwritten nor silently repaired.
 
-更新应用后推送 main 即可。更新权重前，需要在本地确认实际训练来源，然后导出公开汇总：
+<a id="凭据与后续更新"></a>
+
+## Credentials and subsequent updates
+
+The repository needs a DOCKERHUB_TOKEN Secret for publishing tano26/seiyuu-faceid images.
+Model publication uses Actions' built-in GITHUB_TOKEN. Only the models job declares `contents: write` and `actions: read` to publish, dispatch, and find existing validation runs.
+Other jobs are read-only, and no separately stored long-lived GitHub key is required.
+The pipeline does not SSH into servers or automatically replace running services.
+
+For application updates, push to main.
+Before updating weights, confirm actual training provenance locally and export the public summary.
 
 ~~~bash
 uv run python tools/export_training_metadata.py --output /tmp/training-new.json
 ~~~
 
-该命令读取当前冻结数据与分类头，只导出汇总，拒绝交叉/重复划分、类别不匹配和错误总数。
-检查新统计后更新 release/training.json；将已准备好的新模型专用归档提供给 CI，
-并更新 release/model-source.json 的固定 GitHub 下载 URL、归档与逐成员摘要、大小。
-模型来源归档必须已经可以下载，CI 不会访问开发电脑的忽略目录，也不会重新训练模型。
-首次引导或更换来源可先手动发布模型专用来源版本，再由流水线生成经过验证的内容版本。
+This command reads current frozen data and the classification head and exports only aggregates.
+It rejects overlapping or duplicated splits, class mismatches, and incorrect totals.
+After reviewing the new statistics, update release/training.json.
+Provide CI with a prepared new model-only archive, then update the pinned GitHub download URL, archive and member digests, and sizes in release/model-source.json.
+The source model archive must already be downloadable. CI does not access ignored directories on the development computer or retrain models.
+For initial bootstrapping or a source change, manually publish a model-only source version first, then let the pipeline generate a verified content-addressed version.
 
-配置阶段完成本地验证；随后按用户授权提交、推送并验证云端流程。
-完整云端构建、Docker Hub 推送及 Release 上传结果，以对应提交的 Actions 运行记录为准。
+### Model publication triggers
+
+Human publication is handled by `release.published` for `models-<content-digest>` tags. The Release must already contain all five verified assets before publication.
+CI publication uses `tools/publish_models.py --dispatch` to send `repository_dispatch` with type `model-published` and `client_payload.tag`. GitHub suppresses ordinary workflow events created with GITHUB_TOKEN, while explicit dispatch events can start workflows. See [GitHub's token rules](https://docs.github.com/en/actions/concepts/security/github_token).
+The publisher checks the most recent 100 CI runs and reuses an active or successful `Model <tag>` run from trusted model events in this repository. PR and fork runs are excluded. Failed runs and missing dispatches can be retried by rerunning the publisher, including after the Release became public.
+Model-event runs validate the selected Release in isolation and never fall back to the checked-in model if it is invalid. All deployment packages in that run use the selected model. The checked-in source remains the default for subsequent ordinary code builds until it is updated explicitly.
+
+To build deployments for an existing model Release or retry a failed model run, select **Run workflow** on main and provide `model_tag`, or use the CLI below after replacing the example tag.
+
+~~~bash
+gh workflow run ci.yml --ref main -f model_tag=models-0123456789abcdef
+~~~
+
+The workflow and scripts must first be present on main. For human publication, the model tag must also point to a commit containing the `release.published` listener because GitHub loads that event's workflow from the tag commit. Existing tags that predate this listener use the manual `model_tag` command above or explicit repository dispatch to main. See [GitHub's workflow trigger rules](https://docs.github.com/en/actions/concepts/workflows-and-actions/workflows).
+The resulting run is named `Model <tag>`. Model publication success and deployment CI success are separate states, so inspect that run before deploying.
+
+Local validation is completed during configuration. Subsequent commit, push, and cloud workflow verification follow user authorization.
+The Actions run for the corresponding commit is authoritative for complete cloud builds, Docker Hub pushes, and Release uploads.

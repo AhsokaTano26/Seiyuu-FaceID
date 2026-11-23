@@ -1,26 +1,85 @@
 name: CI, deployments and models
+run-name: ${{ (github.event.release.tag_name || github.event.client_payload.tag || inputs.model_tag) && format('Model {0}', github.event.release.tag_name || github.event.client_payload.tag || inputs.model_tag) || format('CI {0}', github.ref_name) }}
 
 on:
   push:
     branches: [main]
     tags: ["v*.*.*"]
   pull_request:
+  release:
+    types: [published]
+  repository_dispatch:
+    types: [model-published]
   workflow_dispatch:
+    inputs:
+      model_tag:
+        description: "Published models-<digest> Release to validate and build deployments for"
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ (github.event.release.tag_name || github.event.client_payload.tag || inputs.model_tag) && format('model-{0}', github.event.release.tag_name || github.event.client_payload.tag || inputs.model_tag) || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  prepare:
+    name: Select application revision and model inputs
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'models-')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      revision: ${{ steps.inputs.outputs.revision }}
+      model_tag: ${{ steps.inputs.outputs.model_tag }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          # Model tags identify weights. Build the current application from main.
+          ref: ${{ (github.event_name == 'release' || github.event_name == 'repository_dispatch' || inputs.model_tag != '') && 'main' || github.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.3.2
+        if: github.event_name == 'release' || github.event_name == 'repository_dispatch' || inputs.model_tag != ''
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - name: Pin verified model inputs
+        id: inputs
+        env:
+          MODEL_TAG: ${{ github.event.release.tag_name || github.event.client_payload.tag || inputs.model_tag }}
+          MODEL_EVENT: ${{ github.event_name == 'release' || github.event_name == 'repository_dispatch' }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$MODEL_EVENT" = "true" ] && [ -z "$MODEL_TAG" ]; then
+            echo "::error::Model publication events require a model tag."
+            exit 1
+          fi
+          if [ -n "$MODEL_TAG" ]; then
+            uv sync --locked --no-dev
+            uv run --no-sync python tools/prepare_model_release.py --tag "$MODEL_TAG" --root dist/model-inputs
+          else
+            mkdir -p dist/model-inputs/release
+            cp release/model-source.json release/training.json dist/model-inputs/release/
+          fi
+          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "model_tag=$MODEL_TAG" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: model-inputs
+          path: dist/model-inputs/release/
+          if-no-files-found: error
+          retention-days: 14
+
   quality:
+    needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7.0.1
         with:
+          ref: ${{ needs.prepare.outputs.revision }}
           persist-credentials: false
       - uses: astral-sh/setup-uv@v10.3.2
         with:
@@ -40,13 +99,20 @@ jobs:
 
   deployments:
     name: Python and Docker deployment packages
-    needs: quality
+    needs: [prepare, quality]
+    env:
+      BUILD_REVISION: ${{ needs.prepare.outputs.revision }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7.0.1
         with:
+          ref: ${{ needs.prepare.outputs.revision }}
           persist-credentials: false
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: model-inputs
+          path: release/
       - uses: astral-sh/setup-uv@v10.3.2
         with:
           python-version: "3.13"
@@ -58,13 +124,13 @@ jobs:
           uv run --no-sync python -c 'from pathlib import Path; from tools.package_models import validate_training; validate_training(Path.cwd())'
       - name: Build deployment archives
         run: |
-          uv run --no-sync python tools/package_ci_deployments.py --kind python --revision "$GITHUB_SHA" --output dist/ci
-          uv run --no-sync python tools/package_ci_deployments.py --kind docker --revision "$GITHUB_SHA" --output dist/ci
+          uv run --no-sync python tools/package_ci_deployments.py --kind python --revision "$BUILD_REVISION" --output dist/ci
+          uv run --no-sync python tools/package_ci_deployments.py --kind docker --revision "$BUILD_REVISION" --output dist/ci
       - name: Smoke test relocated Python package
         run: |
           stage="$RUNNER_TEMP/python-deployment"
           mkdir -p "$stage"
-          tar -xzf "dist/ci/seiyuu-faceid-python-$GITHUB_SHA.tar.gz" -C "$stage"
+          tar -xzf "dist/ci/seiyuu-faceid-python-$BUILD_REVISION.tar.gz" -C "$stage"
           cp -a models "$stage/models"
           (cd "$stage" && sha256sum --check SHA256SUMS)
           uv run --no-sync python tools/smoke_deployment.py --kind python --root "$stage" --log dist/python-smoke.log
@@ -74,7 +140,7 @@ jobs:
         run: |
           stage="$RUNNER_TEMP/docker-deployment"
           mkdir -p "$stage"
-          tar -xzf "dist/ci/seiyuu-faceid-docker-$GITHUB_SHA.tar.gz" -C "$stage"
+          tar -xzf "dist/ci/seiyuu-faceid-docker-$BUILD_REVISION.tar.gz" -C "$stage"
           cp -a models "$stage/models"
           (cd "$stage" && sha256sum --check SHA256SUMS)
           docker compose --project-directory "$stage" -f "$stage/compose.yaml" config --quiet
@@ -83,7 +149,7 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: seiyuu-faceid-python-${{ github.sha }}
+          name: seiyuu-faceid-python-${{ needs.prepare.outputs.revision }}${{ needs.prepare.outputs.model_tag && format('-{0}', needs.prepare.outputs.model_tag) || '' }}
           path: |
             dist/ci/seiyuu-faceid-python-*.tar.gz
             dist/ci/seiyuu-faceid-python-*.tar.gz.sha256
@@ -94,7 +160,7 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: seiyuu-faceid-docker-${{ github.sha }}
+          name: seiyuu-faceid-docker-${{ needs.prepare.outputs.revision }}${{ needs.prepare.outputs.model_tag && format('-{0}', needs.prepare.outputs.model_tag) || '' }}
           path: |
             dist/ci/seiyuu-faceid-docker-*.tar.gz
             dist/ci/seiyuu-faceid-docker-*.tar.gz.sha256
@@ -104,13 +170,20 @@ jobs:
 
   native:
     name: Linux amd64 C++ and Go runtime
-    needs: quality
+    needs: [prepare, quality]
+    env:
+      BUILD_REVISION: ${{ needs.prepare.outputs.revision }}
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7.0.1
         with:
+          ref: ${{ needs.prepare.outputs.revision }}
           persist-credentials: false
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: model-inputs
+          path: release/
       - uses: astral-sh/setup-uv@v10.3.2
         with:
           python-version: "3.13"
@@ -163,10 +236,10 @@ jobs:
           uv run --no-sync python tools/validate_native.py --library dist/native-runtime/lib/libfaceid_core.so --model models/selected/native-n150.json --config configs/n150.yaml --crop-dir dist/ci-crops --samples 4 --output dist/native-smoke-parity.json
       - name: Package and smoke test relocated runtime
         run: |
-          uv run --no-sync python tools/package_ci_deployments.py --kind native --revision "$GITHUB_SHA" --runtime dist/native-runtime --output dist/ci
+          uv run --no-sync python tools/package_ci_deployments.py --kind native --revision "$BUILD_REVISION" --runtime dist/native-runtime --output dist/ci
           stage="$RUNNER_TEMP/native-deployment"
           mkdir -p "$stage"
-          tar -xzf "dist/ci/seiyuu-faceid-native-linux-amd64-$GITHUB_SHA.tar.gz" -C "$stage"
+          tar -xzf "dist/ci/seiyuu-faceid-native-linux-amd64-$BUILD_REVISION.tar.gz" -C "$stage"
           (cd "$stage" && sha256sum --check SHA256SUMS)
           cp -an models/. "$stage/models/"
           uv run --no-sync python tools/smoke_deployment.py --kind native --root "$stage" --log dist/native-smoke.log
@@ -174,7 +247,7 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: seiyuu-faceid-native-linux-amd64-${{ github.sha }}
+          name: seiyuu-faceid-native-linux-amd64-${{ needs.prepare.outputs.revision }}${{ needs.prepare.outputs.model_tag && format('-{0}', needs.prepare.outputs.model_tag) || '' }}
           path: |
             dist/ci/seiyuu-faceid-native-linux-amd64-*.tar.gz
             dist/ci/seiyuu-faceid-native-linux-amd64-*.tar.gz.sha256
@@ -184,16 +257,17 @@ jobs:
 
   docker:
     name: Publish Docker Hub image
-    needs: [quality, deployments]
+    needs: [prepare, quality, deployments]
     if: >-
       github.event_name != 'pull_request' &&
       github.repository == 'AhsokaTano26/Seiyuu-FaceID' &&
-      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+      (needs.prepare.outputs.model_tag != '' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7.0.1
         with:
+          ref: ${{ needs.prepare.outputs.revision }}
           persist-credentials: false
       - name: Check publishing credentials
         env:
@@ -212,9 +286,12 @@ jobs:
           images: tano26/seiyuu-faceid
           flavor: latest=false
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=semver,pattern={{version}}
-            type=sha,format=long
+            type=raw,value=latest,enable=${{ needs.prepare.outputs.model_tag == '' && github.ref == 'refs/heads/main' }}
+            type=semver,pattern={{version}},enable=${{ needs.prepare.outputs.model_tag == '' }}
+            type=raw,value=sha-${{ needs.prepare.outputs.revision }}
+            type=raw,value=${{ needs.prepare.outputs.model_tag || 'unused' }},enable=${{ needs.prepare.outputs.model_tag != '' }}
+          labels: |
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.revision }}
       - uses: docker/login-action@v4
         with:
           username: tano26
@@ -232,22 +309,29 @@ jobs:
 
   models:
     name: Publish model-only Release
-    needs: [quality, deployments, native, docker]
+    needs: [prepare, quality, deployments, native, docker]
     if: >-
       github.event_name != 'pull_request' &&
+      needs.prepare.outputs.model_tag == '' &&
       github.repository == 'AhsokaTano26/Seiyuu-FaceID' &&
       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: write
+      actions: read
     concurrency:
       group: model-release-${{ github.repository }}
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7.0.1
         with:
+          ref: ${{ needs.prepare.outputs.revision }}
           persist-credentials: false
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: model-inputs
+          path: release/
       - uses: astral-sh/setup-uv@v10.3.2
         with:
           python-version: "3.13"
@@ -257,8 +341,9 @@ jobs:
           uv sync --locked --no-dev
           uv run --no-sync python tools/fetch_models.py
           uv run --no-sync python tools/package_models.py --output dist/model-release --notes dist/model-notes.md --metadata dist/model-release.json
-      - name: Publish or verify existing model Release
+      - name: Publish model Release and ensure deployment CI is triggered
         env:
           GH_TOKEN: ${{ github.token }}
+          BUILD_REVISION: ${{ needs.prepare.outputs.revision }}
         run: |
-          uv run --no-sync python tools/publish_models.py --directory dist/model-release --metadata dist/model-release.json --notes dist/model-notes.md --revision "$GITHUB_SHA"
+          uv run --no-sync python tools/publish_models.py --directory dist/model-release --metadata dist/model-release.json --notes dist/model-notes.md --revision "$BUILD_REVISION" --dispatch

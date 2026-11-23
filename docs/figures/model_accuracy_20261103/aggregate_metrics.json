@@ -1,0 +1,148 @@
+{
+  "schema_version": 1,
+  "report_date": "2026-11-03",
+  "primary_model_tag": "models-5cc19e9d5b1a30aa",
+  "comparison_scope": "Each version uses its own identity set and holdout; descriptive historical reference, not a paired improvement estimate.",
+  "new": {
+    "tag": "models-5cc19e9d5b1a30aa",
+    "release_url": "https://github.com/AhsokaTano26/Seiyuu-FaceID/releases/tag/models-5cc19e9d5b1a30aa",
+    "class_count": 606,
+    "fit_samples": 49858,
+    "split_sizes": {
+      "train": 41067,
+      "validation": 8791,
+      "test": 8759
+    },
+    "classifier_sha256": "b0121a7e86d4d100b1b6c419fa2832aeddd14cb69908b62e75de7b3cf6eeb381",
+    "model_id": "b929a36dce6a6d3a29aa17b87f0685b5faea31538d993a7ae761d7bfb2baa582",
+    "finished_at": "2026-11-02T19:06:50.033899+00:00",
+    "metrics": {
+      "samples": 8759,
+      "supported_classes": 606,
+      "top1_correct": 8705,
+      "errors": 54,
+      "top1_accuracy": 0.9938349126612627,
+      "top5_accuracy": 0.9963466149103779,
+      "macro_f1_supported_classes": 0.9915616359061972,
+      "balanced_accuracy": 0.993357550848243,
+      "outcomes": {
+        "accepted_correct": 8578,
+        "accepted_wrong": 15,
+        "review_correct": 127,
+        "review_wrong": 39
+      },
+      "accepted": 8593,
+      "review": 166,
+      "acceptance_threshold": 0.95,
+      "accepted_precision": 0.9982543931106714,
+      "coverage": 0.9810480648475853,
+      "correct_auto_return_rate": 0.9793355405868249,
+      "wrong_auto_return_rate": 0.0017125242607603608,
+      "top5_correct": 8727
+    }
+  },
+  "old": {
+    "tag": "models-ca1a34fb7a63a38f",
+    "release_url": "https://github.com/AhsokaTano26/Seiyuu-FaceID/releases/tag/models-ca1a34fb7a63a38f",
+    "class_count": 50,
+    "fit_samples": 4064,
+    "split_sizes": {
+      "train": 3574,
+      "validation": 490,
+      "test": 1051
+    },
+    "classifier_sha256": "c9dcffea88abfb014bb62651412b3ce818cf0e6fa8c52c494caaebe5b08b45be",
+    "model_id": "334678eea82626d0532221fee689686d4242a6096eaf41b93d06b42198f518cb",
+    "metrics": {
+      "samples": 1051,
+      "supported_classes": 49,
+      "top1_correct": 1035,
+      "errors": 16,
+      "top1_accuracy": 0.9847764034253093,
+      "top5_accuracy": 0.9914367269267365,
+      "macro_f1_supported_classes": 0.9909534956963103,
+      "balanced_accuracy": 0.991249155214361,
+      "outcomes": {
+        "accepted_correct": 1007,
+        "accepted_wrong": 4,
+        "review_correct": 28,
+        "review_wrong": 12
+      },
+      "accepted": 1011,
+      "review": 40,
+      "acceptance_threshold": 0.95,
+      "accepted_precision": 0.9960435212660732,
+      "coverage": 0.961941008563273,
+      "correct_auto_return_rate": 0.9581351094196003,
+      "wrong_auto_return_rate": 0.003805899143672693,
+      "top5_correct": 1042
+    }
+  },
+  "new_support": {
+    "identities": 606,
+    "fit_min": 8,
+    "fit_median": 49.0,
+    "fit_max": 1483,
+    "test_min": 2,
+    "test_median": 8.0,
+    "test_max": 244,
+    "test_at_most_5": 208,
+    "test_at_most_10": 353,
+    "fit_bin_labels": [
+      "1–9",
+      "10–24",
+      "25–49",
+      "50–99",
+      "100–199",
+      "200–499",
+      "500–999",
+      "1000+"
+    ],
+    "fit_histogram": [
+      15,
+      140,
+      151,
+      167,
+      81,
+      44,
+      6,
+      2
+    ],
+    "test_bin_labels": [
+      "1–2",
+      "3–5",
+      "6–10",
+      "11–20",
+      "21–50",
+      "51–100",
+      "101+"
+    ],
+    "test_histogram": [
+      54,
+      154,
+      145,
+      142,
+      90,
+      15,
+      6
+    ]
+  },
+  "new_data_flow": {
+    "queued_images": 258670,
+    "proposed_identities": 667,
+    "accepted_before_dedup": 60763,
+    "rejected_by_detection_quality": 197907,
+    "exact_duplicate": 749,
+    "cross_identity_duplicate_component": 1033,
+    "fewer_than_10_unique_components": 364,
+    "selected_crops": 58617
+  },
+  "evidence_sha256": {
+    "data/experiments/transfer_20261103/mac/full/report.json": "471e94cf1a29c1bb38e46577997729b45f51c4c8f09180f48e841be4ce417d1b",
+    "data/experiments/transfer_20261103/mac/full/training/holdout_scores.npz": "cd4cb13ede7efe4f1ec0973358ae9cefd38fc6b81f544103d4b6b8572674f1a7",
+    "data/experiments/transfer_20261103/mac/full/training/features_and_splits.npz": "d1c64fef1c9f5d6bee74f3c1c11835f5792424a1f756abda95086f92890b3719",
+    "data/training/features_and_splits.npz": "5f8bbb64773cd65d05dffff104067779c04a0a2b8e85604555dc5be3ebc89d92",
+    "data/experiments/transfer_20261103/mac/full/candidate/classifier.npz": "b0121a7e86d4d100b1b6c419fa2832aeddd14cb69908b62e75de7b3cf6eeb381",
+    "models/selected/classifier.npz": "c9dcffea88abfb014bb62651412b3ce818cf0e6fa8c52c494caaebe5b08b45be"
+  }
+}

@@ -245,3 +245,106 @@ def test_training_metadata_counts_only_fit_rows_and_binds_classifier(tmp_path):
     )
     with pytest.raises(ValueError, match="split|overlap"):
         export_training_metadata(source, head, manifest)
+
+
+@pytest.fixture
+def published_models(delivery_source):
+    from tools.fetch_models import fetch_models
+    from tools.package_models import package_models
+
+    root, archive, _, _ = delivery_source
+    fetch_models(root, root / "release/model-source.json", archive=archive)
+    directory = root / "published"
+    metadata = package_models(root, directory)
+    release = {
+        "tag_name": metadata["tag"],
+        "draft": False,
+        "assets": [
+            {
+                "name": p.name,
+                "state": "uploaded",
+                "size": p.stat().st_size,
+                "digest": "sha256:" + digest(p.read_bytes()),
+                "browser_download_url": (
+                    f"https://github.com/example/project/releases/download/{metadata['tag']}/{p.name}"
+                ),
+            }
+            for p in directory.iterdir()
+        ],
+    }
+    return directory, release
+
+
+def test_release_event_pins_the_published_model_for_deployment(published_models, tmp_path):
+    from tools.fetch_models import fetch_models, load_source
+    from tools.prepare_model_release import prepare_release
+
+    directory, release = published_models
+    target = tmp_path / "checkout"
+    prepare_release(target, directory, release, repository="example/project")
+    source_path = target / "release/model-source.json"
+    source = load_source(source_path)
+    assert source["url"].endswith(f"/{release['tag_name']}/seiyuu-faceid-models.tar.gz")
+    assert source["sha256"] == digest((directory / "seiyuu-faceid-models.tar.gz").read_bytes())
+    assert not (target / "models").exists()
+    fetch_models(target, source_path, archive=directory / "seiyuu-faceid-models.tar.gz")
+    from tools.package_models import validate_training
+
+    assert validate_training(target)["identities"] == [
+        {"name": "甲", "training_samples": 2},
+        {"name": "乙", "training_samples": 1},
+    ]
+
+
+@pytest.mark.parametrize(
+    "change", ["digest", "tag", "draft", "extra", "unsafe_member", "training", "metadata"]
+)
+def test_bad_published_models_never_replace_deployment_inputs(published_models, tmp_path, change):
+    from tools.prepare_model_release import prepare_release
+
+    directory, release = published_models
+    if change == "digest":
+        (directory / "TRAINING_SAMPLES.csv").write_text("corrupt")
+    elif change == "tag":
+        release["tag_name"] = "models-" + "0" * 16
+    elif change == "draft":
+        release["draft"] = True
+    elif change == "extra":
+        release["assets"].append({"name": "deployment.tar.gz"})
+    else:
+        archive_path = directory / "seiyuu-faceid-models.tar.gz"
+        with tarfile.open(archive_path) as tar:
+            files = {member.name: tar.extractfile(member).read() for member in tar}
+        if change == "unsafe_member":
+            files["../outside"] = b"attack"
+        elif change == "training":
+            training = json.loads(files["models/TRAINING_PROVENANCE.json"])
+            training["identities"][0]["training_samples"] += 1
+            data = json.dumps(training).encode()
+            files["models/TRAINING_PROVENANCE.json"] = data
+            (directory / "TRAINING_PROVENANCE.json").write_bytes(data)
+        else:
+            (directory / "MODEL_LICENSES.md").write_text("different outer metadata")
+        write_tar(archive_path, files)
+        release["tag_name"] = "models-" + digest(archive_path.read_bytes())[:16]
+        (directory / "SHA256SUMS").write_text(
+            "".join(
+                f"{digest(p.read_bytes())}  {p.name}\n"
+                for p in sorted(directory.iterdir())
+                if p.name != "SHA256SUMS"
+            )
+        )
+        for asset in release["assets"]:
+            path = directory / asset["name"]
+            asset.update(size=path.stat().st_size, digest="sha256:" + digest(path.read_bytes()))
+            asset["browser_download_url"] = (
+                f"https://github.com/example/project/releases/download/{release['tag_name']}/{path.name}"
+            )
+    target = tmp_path / "checkout"
+    (target / "release").mkdir(parents=True)
+    (target / "release/model-source.json").write_text("original source")
+    with pytest.raises(ValueError):
+        prepare_release(target, directory, release, repository="example/project")
+    assert (target / "release/model-source.json").read_text() == "original source"
+    assert not (target / "models").exists()
+    assert not (tmp_path / "outside").exists()

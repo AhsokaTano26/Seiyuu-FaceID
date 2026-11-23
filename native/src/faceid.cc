@@ -246,7 +246,7 @@ public:
                 {"defaults", {{"top_k", top_k_}, {"probability_threshold", threshold_}}}};
     }
     void validate_request(int mode, int top_k, double threshold) const {
-        if (mode < 0 || mode > 2 || top_k < 1 || std::size_t(top_k) > names_.size() || !finite(threshold) || threshold < 0 || threshold > 1)
+        if (mode < 0 || mode > 3 || top_k < 1 || std::size_t(top_k) > names_.size() || !finite(threshold) || threshold < 0 || threshold > 1)
             throw Error("invalid_argument", "Invalid recognition parameters.");
     }
 
@@ -260,7 +260,8 @@ public:
             return {{"features", features}, {"probabilities", probabilities}, {"candidates", candidates(probabilities, top_k)}};
         }
         json faces = json::array();
-        for (const auto &detection : detect(image)) {
+        const auto min_score = mode == 3 && threshold > 0 ? threshold : float(score_threshold_);
+        for (const auto &detection : detect(image, min_score, mode != 3)) {
             json box = json::array();
             for (float value : detection.box) box.push_back(round_two(value));
             json item{{"bbox", box}, {"detector_score", detection.score}};
@@ -268,7 +269,7 @@ public:
                 json points = json::array();
                 for (auto point : detection.points) points.push_back({round_two(point.x), round_two(point.y)});
                 item["landmarks"] = points;
-            } else {
+            } else if (mode == 0) {
                 const auto quality = assess_quality(image, detection);
                 item["quality_score"] = quality.at("score");
                 item["quality_reasons"] = quality.at("reasons");
@@ -371,7 +372,7 @@ private:
         return result;
     }
 
-    std::vector<Detection> detect(const cv::Mat &image) {
+    std::vector<Detection> detect(const cv::Mat &image, double min_score, bool need_landmarks) {
         cv::Mat working = image;
         double resize_scale = 1;
         const int long_edge = std::max(image.cols, image.rows);
@@ -410,12 +411,12 @@ private:
             const auto *points = output[level + 6].GetTensorData<float>();
             for (std::size_t index = 0; index < count; ++index) {
                 require(finite(scores[index]), "Detector returned a nonfinite score.");
-                if (scores[index] < float(score_threshold_)) continue;
+                if (scores[index] < min_score) continue;
                 const float center_x = float((index / anchors) % feature_width) * stride;
                 const float center_y = float((index / anchors) / feature_width) * stride;
                 Detection detection{{center_x - distances[4 * index] * stride, center_y - distances[4 * index + 1] * stride,
                                      center_x + distances[4 * index + 2] * stride, center_y + distances[4 * index + 3] * stride}, scores[index], {}};
-                for (std::size_t i = 0; i < 5; ++i) {
+                for (std::size_t i = 0; need_landmarks && i < 5; ++i) {
                     detection.points[i] = {center_x + points[index * 10 + i * 2] * stride, center_y + points[index * 10 + i * 2 + 1] * stride};
                     require(finite(detection.points[i].x) && finite(detection.points[i].y), "Detector returned invalid landmarks.");
                 }
@@ -450,9 +451,11 @@ private:
                 value /= float(scale); value /= float(resize_scale);
                 selected.box[i] = std::clamp(value, 0.0f, float((x ? image.cols : image.rows) - 1));
             }
-            for (auto &point : selected.points) {
-                point.x -= float(pad_x); point.x /= float(scale); point.x /= float(resize_scale);
-                point.y -= float(pad_y); point.y /= float(scale); point.y /= float(resize_scale);
+            if (need_landmarks) {
+                for (auto &point : selected.points) {
+                    point.x -= float(pad_x); point.x /= float(scale); point.x /= float(resize_scale);
+                    point.y -= float(pad_y); point.y /= float(scale); point.y /= float(resize_scale);
+                }
             }
             kept.push_back(selected);
         }

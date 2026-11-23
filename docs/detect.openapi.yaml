@@ -1,0 +1,211 @@
+openapi: 3.1.0
+info:
+  title: Seiyuu FaceID 人脸检测 API
+  version: 1.0.0
+servers:
+- url: http://127.0.0.1:8000
+paths:
+  /api/v1/detect:
+    post:
+      tags:
+      - Inference
+      summary: 检测图片中是否有人脸
+      operationId: detect_presence_api_v1_detect_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: score_threshold
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: number
+            maximum: 1
+            exclusiveMinimum: 0
+          - type: 'null'
+          title: Score Threshold
+        description: 本次请求的最低检测置信度。省略时使用 detector.score_threshold，随附配置为 0.50。
+        example: 0.7
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_detect_presence_api_v1_detect_post'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PresenceResponse'
+              examples:
+                face:
+                  summary: 一张人脸
+                  value:
+                    has_face: true
+                    face_count: 1
+                    faces:
+                    - bbox:
+                      - 38.2
+                      - 27.1
+                      - 104.5
+                      - 119.7
+                      detector_score: 0.93
+                no_face:
+                  summary: 无人脸达到阈值
+                  value:
+                    has_face: false
+                    face_count: 0
+                    faces: []
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 文件为空、图片损坏或 multipart 请求无效。
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 已启用鉴权，所提供的 Bearer 密钥无效或缺失。
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 文件、请求体或图片像素数超过限制。
+        '415':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 上传格式不受支持或图片为动图。
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 缺少文件、文件数量错误或查询参数无效。
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 检测模型运行异常或服务内部错误。
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 模型未就绪、请求超时（detection_timeout）或原生服务队列已满。
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 连接来源未获内网访问授权（internal_only）。
+      description: 上传一张静态 JPEG、PNG 或 WebP。默认仅限同机回环访问。部署设置 API 密钥时须使用 Bearer 鉴权。单文件最多 10 MiB，默认最多 2000 万像素，请求默认超时
+        5 秒。
+components:
+  securitySchemes:
+    HTTPBearer:
+      type: http
+      scheme: bearer
+  schemas:
+    Body_detect_presence_api_v1_detect_post:
+      properties:
+        file:
+          type: string
+          contentMediaType: application/octet-stream
+          title: File
+          description: JPEG, PNG or WebP image.
+          format: binary
+      type: object
+      required:
+      - file
+      title: Body_detect_presence_api_v1_detect_post
+    PresenceResponse:
+      properties:
+        has_face:
+          type: boolean
+          title: Has Face
+        face_count:
+          type: integer
+          minimum: 0.0
+          title: Face Count
+        faces:
+          items:
+            $ref: '#/components/schemas/DetectionBox'
+          type: array
+          title: Faces
+      type: object
+      required:
+      - has_face
+      - face_count
+      - faces
+      title: PresenceResponse
+    DetectionBox:
+      properties:
+        bbox:
+          prefixItems:
+          - type: number
+          - type: number
+          - type: number
+          - type: number
+          type: array
+          maxItems: 4
+          minItems: 4
+          title: Bbox
+          description: 依次为 x1、y1、x2、y2，单位为像素。原点为校正 EXIF 方向后的原图左上角。
+        detector_score:
+          type: number
+          title: Detector Score
+          description: SCRFD 对该人脸框给出的检测置信度。
+      type: object
+      required:
+      - bbox
+      - detector_score
+      title: DetectionBox
+    ErrorResponse:
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorBody'
+      type: object
+      required:
+      - error
+      title: ErrorResponse
+    ErrorBody:
+      properties:
+        code:
+          type: string
+          title: Code
+        message:
+          type: string
+          title: Message
+        details:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/ErrorDetail'
+            type: array
+          - type: 'null'
+          title: Details
+      type: object
+      required:
+      - code
+      - message
+      title: ErrorBody
+    ErrorDetail:
+      properties:
+        field:
+          type: string
+          title: Field
+        message:
+          type: string
+          title: Message
+      type: object
+      required:
+      - field
+      - message
+      title: ErrorDetail

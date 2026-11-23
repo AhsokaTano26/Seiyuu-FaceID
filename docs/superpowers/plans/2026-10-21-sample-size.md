@@ -1,68 +1,52 @@
 # Training image count study
 
-**Goal:** 估计当前冻结双骨干＋逻辑回归方案，在默认概率阈值 0.95 下，
-每个身份达到至少 95% 正确返回率所需的训练图片数。
+[English](2026-10-21-sample-size.md) | [简体中文](2026-10-21-sample-size.zh-CN.md) | [日本語](2026-10-21-sample-size.ja.md)
 
-**Authorization:** 用户明确要求实验，并选择“每个身份正确识别率至少 95%”。
-本次使用当前私有数据进行探索性实验，不更新生产模型、训练池或运行中的 API。
+This file records the protocol and findings from 2026-10-21.
+
+The goal was to estimate how many training images per identity were needed for at least 95% correct-return rate under the frozen dual-backbone and logistic-regression pipeline at probability threshold 0.95.
+
+The user requested the experiment and chose “at least 95% correct identification per identity.” This exploratory study uses the existing private data, with the production model, training pool and running API managed separately.
 
 ## Protocol
 
-- 数据：`data/training/features_and_splits.npz`、`samples.jsonl`，预训练特征保持不变。
-- 拟合池：原 train + validation，测试池：原 test。按 sample_id 对齐，检查
-  索引、标签、原图 SHA、裁剪 SHA 与来源组隔离；记录当前文件 SHA256。
-- 原 `holdout_protocol.json` 的两个文件 hash 与当前文件不一致，不能作为当前版本
-  的完整性凭证。保留这一发现；以当前数组/样本一致性、部署头与保留 scores 对齐、
-  重新拟合完整数据的预测一致性及新的 hash 快照建立本次实验依据。
-- “一张训练图”：一个 source_group 选一张审核人脸。避免连拍/写真同组多张被当成
-  多个独立来源；这些组是现有去重策略的近似，不证明绝对拍摄独立。
-- 所有实验始终训练 50 类。目标身份同时按每人 N 张采样；其余身份完整拟合数据固定，
-  不随 N 改动。Scaler 仅在该次选中的训练样本上拟合。
-- 100 档主队列：至少 100 个训练来源组、10 个测试来源组的 9 个身份。
-- 50 档扩展队列：至少 50 个训练来源组、10 个测试来源组的 12 个身份。
-- 两队列分别分析，不能拼接成同一条固定人群曲线。
-- 训练图数：1/2/3/5/8/10/15/20/30/50/75/100；扩展队列截到 50。
-- 每队列重复 30 次，种子从 20261021 开始。同一重复内所有 N 使用同一随机顺序前缀，
-  确保嵌套采样。选中组的代表图也在重复内固定。所有抽样记录可追溯。
-- 测试每身份每来源组选一张代表图，使用独立固定种子，所有 N/重复/队列完全相同。
-- 模型：StandardScaler + LogisticRegression(C=1, class_weight=balanced,
-  max_iter=1500, random_state=20261014)，与当前部署头一致；限制数值线程为 2。
-- 指标：Top-1；正确且概率≥0.95 的返回率；误接受率；review；接受结果准确率。
-  review 算未成功，分母为该身份固定测试来源组数。
-- “观察到的最低图数”：该身份在所有 30 次抽样均≥95%，且本次测试过的所有更高 N
-  都满足这一条件的最小 N。没有通过则返回空值，不用均值掩盖身份或抽样失败。
-- 另报逐次实验的单侧 95% Clopper–Pearson 下限的最差值。重复抽样不增加独立测试数；
-  不把 30 次测试结果相加。另给满足区间下限也≥95% 的更严格门槛。
-- 本实验复用已经探索过的留出集，区间是条件性描述，不作为新测试集确认或多重比较校正
-  后的保证。不覆盖未知身份拒识或完整 API 检测/质量失败。
+- Data are `data/training/features_and_splits.npz` and `samples.jsonl`, with pretrained features fixed.
+- Fit on original train + validation and test on original test. Align sample IDs and verify indices, labels, source SHA, crop SHA and source-group isolation. Record current file SHA256.
+- Two hashes in `holdout_protocol.json` differ from current files. Preserve that finding and establish this study's evidence using array/row consistency, alignment between deployed head and saved scores, prediction agreement after complete refitting, and a new hash snapshot.
+- One training image means one reviewed face selected from a source_group. This limits overcounting burst/book images as independent sources. Groups approximate the current duplicate strategy and do not establish fully independent photo shoots.
+- All runs train all 50 classes. Target identities use N images per person simultaneously. The other identities keep their complete fixed fit rows. Fit the scaler only on the selected rows in that run.
+- The 100-image cohort has 9 identities with at least 100 training source groups and 10 test groups.
+- The 50-image cohort has 12 identities with at least 50 training groups and 10 test groups.
+- Analyze the cohorts separately because their populations differ.
+- Counts are 1/2/3/5/8/10/15/20/30/50/75/100, truncated at 50 for the expanded cohort.
+- Run 30 repeats per cohort with seeds starting at 20261021. Each repeat uses prefixes of the same randomized order across N, including fixed representatives of selected groups. Preserve traceable sampling records.
+- Select one representative per test identity/source group with a separate fixed seed, identical across N, repeats and cohorts.
+- Use StandardScaler + LogisticRegression(C=1, class_weight=balanced, max_iter=1500, random_state=20261014), matching the deployed head. Limit numerical threads to 2.
+- Report Top-1, correct return at probability ≥0.95, false acceptance, review and accepted-result precision. Review counts as unsuccessful. The denominator is each identity's fixed test-source count.
+- The observed minimum count is the smallest tested N where all 30 repeats and every larger tested N achieve ≥95% for that identity. Return null if none passes. Report individual identities and repeats.
+- Also report the worst one-sided 95% Clopper–Pearson lower bound over runs. Repeats reuse the independent tests and are not pooled into an enlarged test count. Give a stricter count for lower bounds ≥95%.
+- The holdout was previously explored. Intervals are conditional descriptions. Unknown rejection and full-API detection/quality failures require separate evaluation.
 
 ## Deliverables and checks
 
-- [x] `src/seiyuu_faceid/experiments/sample_size.py`：校验、分组抽样、指标、实验主循环。
-- [x] `tools/sample_size_study.py`：可复跑 CLI，输出到本地忽略目录。
-- [x] `tests/test_sample_size_study.py`：来源隔离、嵌套采样、阈值与分母、区间、持续达标判定。
-- [x] 先运行失败用例，再实现并验证；使用现有 locked training extra。
-- [x] 运行两队列 660 次及扩展 480 次拟合，保存 hash、抽样、逐次预测、汇总和每身份结果。
-- [x] 重算关键结论、审阅实验设计与实现、完成全套测试（103 passed，Ruff 通过）。
-- [x] 生成包含结论、范围、分身份结果、方法、局限及后续采集计划的 HTML 报告。
+- [x] `src/seiyuu_faceid/experiments/sample_size.py` implements validation, grouped sampling, metrics and study loops.
+- [x] `tools/sample_size_study.py` provides a repeatable CLI writing to an ignored local directory.
+- [x] `tests/test_sample_size_study.py` covers source isolation, nested sampling, thresholds, denominators, intervals and sustained success.
+- [x] Run failing tests, implement, then verify using the locked training extra.
+- [x] Run 660 initial fits across two cohorts and 480 expanded fits, saving hashes, sampling, predictions, summaries and per-identity results.
+- [x] Recalculate findings, review design/implementation, and run all tests (103 passed, Ruff passed).
+- [x] Produce an HTML report with conclusions, scope, per-identity results, methods, limits and further collection plan.
 
 ## Progress
 
-- 50 类、5,115 个样本，拟合 4,064，测试 1,051；四种关键字段跨池交集均为 0。
-- 完整数据重新拟合 0.083 秒，Top-1 预测与部署头完全一致，最大概率差约 2.1e-7。
-- 当前部署头原 1,051 个测试人脸：Top-1 98.4776%，正确返回率 95.8135%，40 个 review。
-- 首轮 660 次完成。50 档只有 4/12 身份全部抽样达标；100 档只有 4/9。
-- 扩展探索：100 档中未通过的 5 个身份恰有至少 200 个训练来源组，追加固定 5 人队列，
-  加入 125/150/175/200 档，共 480 次拟合；保持完整 50 类及相同测试代表图。
-  这是观察结果后追加的探索，不作为预注册确认性检验。
-- 独立审阅复算通过：所有指标、区间、持续达标判定、嵌套抽样与固定测试代表图一致。
-  未发现实现缺陷；报告须避免将原 1,051 裁剪基线与来源组子队列直接比较，
-  不把 30/30 抽样通过称为对未来抽样 95% 可靠性的保证。
-- 追加队列完成：200 张仅近藤天音全部抽样通过；持续达标最低测试档位为 175。
-  上坂堇、爱美、相羽爱奈、远藤祐里香到 200 张仍未全部抽样通过。
-- 逐身份区间、聚合、最差抽样与最低档位已由独立实现及 SQLite 原始计数聚合交叉核验。
-- 当前数据、部署分类头和 manifest 的实验前后 SHA256 全部一致。
-- 产物：`data/experiments/sample_size_20261021/report.html`（规范报告）、
-  `analysis.ipynb`（4 个代码单元自上而下执行通过）、CSV、NPZ、抽样、来源指纹。
-- HTML 包验证与结构校验通过。机器未提供 Chromium headless-shell，按打包工具约定保留语义
-  表格回退；没有进行浏览器视觉或来源弹窗交互验收。报告不依赖网络或本地 API 服务。
+- The 50 classes contain 5,115 samples, with 4,064 fit and 1,051 test. Cross-pool intersections for all four key fields are 0.
+- Complete refit takes 0.083 seconds, reproduces deployed Top-1 predictions, and differs in probability by at most about 2.1e-7.
+- The head's original 1,051-face baseline is Top-1 98.4776%, correct-return rate 95.8135%, and 40 reviews.
+- All 660 initial fits completed. Only 4/12 identities in the 50-image cohort and 4/9 in the 100-image cohort passed every repeat.
+- After inspecting results, the five unsuccessful identities in the 100-image cohort each had at least 200 fit groups. An additional fixed five-person cohort tested 125/150/175/200, adding 480 fits, with all 50 classes and unchanged test representatives. This is a later exploratory extension.
+- Independent review reproduced metrics, intervals, sustained success, nested sampling and fixed test representatives. No implementation defect was found. The original 1,051-crop baseline and source-group subcohorts use different populations, and passing 30/30 repeats does not establish 95% reliability for future samples.
+- In the added cohort, only 近藤天音 passed all repeats at 200. The lowest tested sustained-success count was 175. 上坂堇, 爱美, 相羽爱奈 and 远藤祐里香 still had failed repeats at 200.
+- Per-identity intervals, aggregates, worst repeats and minimum counts were cross-checked independently and against SQLite raw count aggregation.
+- Before/after SHA256 values of data, deployed head and manifest agree.
+- Outputs are `data/experiments/sample_size_20261021/report.html`, an `analysis.ipynb` executed top-to-bottom with four code cells, CSV, NPZ, samples and source fingerprints.
+- HTML package and structure validation passed. Chromium headless-shell was unavailable, so semantic-table fallback was retained according to the packaging tool. Browser visuals and source-popover interactions were unverified. The report runs independently of network and local API services.

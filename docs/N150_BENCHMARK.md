@@ -1,392 +1,377 @@
-# Intel N150 实机验证：原生运行时、准确率与三组性能对照
+# Intel N150 hardware validation of the native runtime, accuracy, and three-way performance
 
-本文记录 2026-10-27 在 Linux / Intel N150 / 8 GB 机器上进行的验证。Linux 原生构建、动态库加载、真实模型接口检查，以及全部历史留出输入上的 Python / C++ 一致性验证已经完成。**三组 HTTP 基线及后续独立 FTZ 候选实验均已完成，结果通过独立审计**。原基线没有显示换语言本身带来可靠提速；定位次正规数处理开销后，FTZ 候选平均 HTTP 耗时为 **680.785 ms**，历史留出准确率保持 **1,035 / 1,051 = 98.48%**。
+[English](N150_BENCHMARK.md) | [简体中文](N150_BENCHMARK.zh-CN.md) | [日本語](N150_BENCHMARK.ja.md)
 
-候选与早前基线使用同一批输入，但分阶段执行，不是同期交替 A/B。第 6 节保留原三组基线，第 8 节单列诊断、实现、全量回归和候选 HTTP 结果。**2026-10-28 已将验证过的实现集成至产品源码，并在 N150 启用；部署验收见第 9 节。**
+This report records validation on 2026-10-27 on a Linux / Intel N150 / 8 GB machine. Linux native builds, dynamic-library loading, real-model interface checks, and Python/C++ parity on all historical holdout inputs were completed. **The three-way HTTP baseline and subsequent independent FTZ-candidate experiment were completed and independently audited.** The original baseline showed no reliable speed gain from changing language alone. After identifying subnormal-number handling overhead, the FTZ candidate achieved mean HTTP time of **680.785 ms**, retaining historical holdout accuracy of **1,035 / 1,051 = 98.48%**.
 
-本轮保持原来的 FP32 模型、分类头和接受阈值，分别考察线程配置调整与 C++ / Go 运行时迁移。算法和实现原理见 [技术详解](TECHNICAL_ARCHITECTURE.md)，构建操作见 [C++ + Go 试验版指南](NATIVE_CPP_GO.md)。
+The candidate and earlier baseline used identical inputs in separate phases. They were not measured in a contemporaneous interleaved A/B experiment. Section 6 preserves the original three-way baseline. Section 8 separately records diagnosis, implementation, full regression, and candidate HTTP results. **The verified implementation was integrated into product source and enabled on N150 on 2026-10-28. Deployment acceptance checks are in Section 9.**
 
-## 1. 已核实的环境
+The original FP32 models, classification head, and acceptance threshold were retained to examine thread-configuration changes and C++/Go runtime migration separately. Algorithms and implementation principles are described in the [technical architecture](TECHNICAL_ARCHITECTURE.md), with build instructions in the [C++ + Go experimental guide](NATIVE_CPP_GO.md).
 
-| 项目 | 本轮环境 |
+## 1. Verified environment
+
+| Item | Environment for this run |
 | --- | --- |
-| 处理器 | Intel N150，4 个可用逻辑 CPU |
-| 内存 | 标称 8 GB，系统可见约 7.535 GiB |
-| 系统 | Linux x86_64，内核 `6.8.0-142-generic`，glibc 2.39 |
-| CPU governor 快照 | 四个 CPU 均为 `powersave` |
-| Python 对照环境 | Python 3.12.3、NumPy 2.5.2、ONNX Runtime 1.29.0 |
-| Python 图像依赖 | OpenCV 5.0.0，发行包 `opencv-python 5.0.0.93`；Pillow 12.3.0 |
-| 原生核心依赖 | ONNX Runtime 1.29.0、OpenCV 5.0.0 |
-| 存储安排 | 在主 SSD 上准备构建、模型与测试输入；没有将测试迁移到机械数据盘 |
+| Processor | Intel N150, 4 available logical CPUs |
+| Memory | Nominally 8 GB, about 7.535 GiB visible to the system |
+| System | Linux x86_64, kernel `6.8.0-142-generic`, glibc 2.39 |
+| CPU governor snapshot | `powersave` on all four CPUs |
+| Python reference environment | Python 3.12.3, NumPy 2.5.2, ONNX Runtime 1.29.0 |
+| Python image dependencies | OpenCV 5.0.0, package `opencv-python 5.0.0.93`, Pillow 12.3.0 |
+| Native-core dependencies | ONNX Runtime 1.29.0, OpenCV 5.0.0 |
+| Storage | Builds, models, and test inputs prepared on the main SSD. Tests were not moved to the mechanical data disk |
 
-`powersave` 是采样时记录到的调频策略，不代表 CPU 被固定在某个低频率。硬件记录同时保存了频率和温度快照；单次快照不能证明整轮测试频率或温度恒定，也不能据此判定有无持续降频。
+`powersave` was the frequency-governor policy recorded at sampling time and does not mean the CPU was locked to a low frequency. Hardware records also include frequency and temperature snapshots. A single snapshot cannot establish constant frequency or temperature throughout testing or determine whether sustained downclocking occurred.
 
-正式测量期间的一次进程快照显示：Python 待测进程的 nice 值为 0，CPU affinity 为 `0–3`；所属 cgroup 及其上级均未设置 CPU 时间硬配额，采集到的 quota throttling 计数为 0。这排除了该快照下的绑单核和 cgroup 配额限制，不能代替温度、功率或整轮调度监测。
+A process snapshot during formal measurement showed nice value 0 and CPU affinity `0–3` for the Python process under test. Neither its cgroup nor its ancestors imposed a hard CPU-time quota, and recorded quota-throttling counts were 0. This excludes single-core binding and cgroup quota limits at that snapshot, without replacing temperature, power, or whole-run scheduling monitoring.
 
-服务器的现有业务容器一直保留运行，测试前记录了后台负载。该快照中现有 FaceID 服务约占 970 MiB 内存，CPU 占用较低；这是背景条件记录，不是待测服务的性能数据，也不能代表整个实验期间都没有干扰。本轮没有为了测试停止现有服务、重建容器或修改数据盘挂载。
+Existing production containers stayed running, and background load was recorded before testing. In that snapshot, the existing FaceID service used about 970 MiB with low CPU utilization. This records background conditions and does not measure the tested service or establish an interference-free experiment. Existing services were not stopped, containers were not rebuilt, and data-disk mounts were not changed for this test.
 
-## 2. Linux 构建与启动检查
+## 2. Linux build and startup checks
 
-已在目标机完成原生构建，检查结果包括：
+Native builds completed on the target machine, with the following checks.
 
-- 应用共享库依赖能够解析，服务可执行文件的帮助命令正常退出。
-- ELF 的相对加载路径为 `$ORIGIN/../lib`，应用在自身旁边寻找打包的共享库。
-- C++ CTest **2 项通过**。
-- Go 普通测试与启用原生核心的构建测试通过，真实模型 HTTP 集成测试通过。
-- Python 模型导出与原生验证相关测试 **20 项通过**。
+- Application shared-library dependencies resolved, and the service executable's help command exited normally.
+- ELF relative loading used `$ORIGIN/../lib` to locate bundled shared libraries alongside the application.
+- **2 C++ CTest tests passed**.
+- Ordinary Go tests, build tests with the native core enabled, and real-model HTTP integration tests passed.
+- **20 Python tests** related to model export and native validation passed.
 
-这里记录的是本轮在 N150 执行的检查范围。此前 Mac 上的完整 Python 206 项测试记录仍是此前记录，不能表述成在 N150 重新运行了完整 206 项。
+These are the checks run on N150 during this round. The earlier complete 206-test Python result on Mac remains a historical record and does not mean all 206 were rerun on N150.
 
-原生服务仍由可执行文件、共享库、模型和配置共同组成，不是静态单文件程序。上述加载检查证明它在这台机器的当前系统环境可运行，不代表任意 Linux 发行版和系统库版本都已经兼容。
+The native service comprises an executable, shared libraries, models, and configuration, so it is not a static single-file program. Loading checks establish operation in this machine's current system environment, without establishing compatibility with every Linux distribution or system-library version.
 
-数值验证使用 Python 驱动器分别启动参考实现与 C API 工作进程；驱动器中的 Python 依赖用于准备输入和比较结果，不表示 Go HTTP 服务运行时需要 Python。C API 数值验证也不能代替 Go 的上传、鉴权、限流和接口集成测试，两类检查分别记录。
+Numerical validation used a Python driver to launch separate reference and C API workers. The driver's Python dependencies prepared inputs and compared results and do not imply that the Go HTTP service needs Python at runtime. C API numerical checks also do not replace Go upload, authentication, rate-limiting, and interface integration tests. The two kinds of checks are recorded separately.
 
-## 3. 输入、模型和配置怎样固定
+## 3. Fixing inputs, models, and configuration
 
-本轮输入在执行前生成清单并计算摘要，包含：
+An input manifest and hashes were generated before execution.
 
-- **1,051 张历史留出人脸裁剪**，用于完整特征、分类概率和身份结果对照。
-- **12 张留出来源原图**，共检测出 **14 张人脸**，用于解码、检测、对齐到分类的完整路径对照，并作为 HTTP 性能实验的固定输入。
+- **1,051 historical holdout face crops** supported full feature, classification-probability, and identity-result comparisons.
+- **12 original images from holdout sources**, with **14 detected faces**, supported the complete decoding, detection, alignment, and classification comparison and served as fixed HTTP-performance inputs.
 
-这 12 张原图的检测结果为 11 张单脸图和 1 张三脸图。每张合格人脸都执行两路骨干，因此后面的请求耗时和 P95 同时受到输入人脸数量影响，不能把这组混合输入的 P95 当作单脸照片的随机延迟尾部。
+The 12 originals comprised 11 images with one detected face and 1 with three faces. Every qualifying face ran through both backbones. Request times and P95 therefore depend on input face counts, and this mixed-input P95 cannot represent the random latency tail of single-face photos.
 
-两种实现使用同一份文件清单、同一组 FP32 权重、原分类头和有序类别名。记录还固定了配置、导出 JSON、核心库、服务二进制和测试脚本的摘要，防止把不同构建或不同输入的结果混在一起。Python YAML 与原生 JSON 的文件摘要本来就不同，比较的是导出后的配置语义一致，而不是两种格式的文件字节相同。
+Both implementations used the same file list, FP32 weights, original head, and ordered class names. Configuration, exported JSON, core library, service binary, and test-script hashes were also fixed to prevent mixing builds or inputs. Python YAML and native JSON naturally have different file hashes. The comparison checks exported configuration semantics, without requiring byte-identical files in different formats.
 
-所有组共同保留以下行为：
+All groups retained these settings.
 
-| 设置 | 值 |
+| Setting | Value |
 | --- | --- |
-| 检测预处理长边上限 | 1920 像素 |
-| SCRFD 输入 | 640 × 640 |
-| 检测阈值 / NMS 阈值 | 0.50 / 0.40 |
-| 最小人脸短边 / 最低清晰度 | 48 像素 / 拉普拉斯方差 20.0 |
-| 默认候选数 / 接受阈值 | 5 / 0.95 |
-| 检测器 intra-op 线程 | 2 |
-| inter-op 线程 / CPU arena | 1 / 开启 |
+| Detection-preprocessing maximum long side | 1920 pixels |
+| SCRFD input | 640 × 640 |
+| Detection / NMS threshold | 0.50 / 0.40 |
+| Minimum face short side / sharpness | 48 pixels / Laplacian variance 20.0 |
+| Default candidate count / acceptance threshold | 5 / 0.95 |
+| Detector intra-op threads | 2 |
+| Inter-op threads / CPU arena | 1 / enabled |
 
-这里的 12 张原图来自历史留出来源，**不同于此前 Mac HTTP 实验使用的 12 张训练来源原图**。因此不能直接用 Mac 与 N150 的平均耗时相除，声称得到同一工作负载下的硬件速度比。
+These 12 originals came from historical holdout sources. **The earlier Mac HTTP experiment used 12 originals from training sources.** Dividing Mac and N150 mean times therefore cannot establish a hardware-speed ratio for the same workload.
 
-## 4. 已完成的准确率与一致性结果
+<a id="accuracy-and-parity"></a>
 
-完整数值对照比较的是 `python_n150` 与 `native_n150`：两者均采用两个骨干各 1 个 intra-op 线程、骨干并行、关闭线程自旋，检测器保留 2 线程。Python 与 C++ 在不同工作进程中运行，避免同一进程的动态库加载相互影响。
+## 4. Completed accuracy and parity results
 
-部分正确性计算曾与构建或另一个正确性工作进程重叠，因此其运行耗时不用于性能结论。正式 HTTP 计时要求所有构建与正确性工作进程退出后才开始。
+Full numerical comparison covered `python_n150` and `native_n150`. Both used 1 intra-op thread per backbone, parallel backbones, disabled spinning, and 2 detector threads. Python and C++ ran in separate workers to avoid dynamic-library interactions within one process.
 
-### 4.1 全部历史留出裁剪
+Some correctness calculations overlapped builds or another correctness worker, so their elapsed times were excluded from performance conclusions. Formal HTTP timing began only after all build and correctness workers had exited.
 
-| 指标 | Python N150 配置 | C++ N150 配置 |
+### 4.1 All historical holdout crops
+
+| Metric | Python N150 configuration | C++ N150 configuration |
 | --- | ---: | ---: |
-| 裁剪数 | 1,051 | 1,051 |
-| 有测试真值的类别数 | 49 | 49 |
-| Top-1 正确数 | 1,035 | 1,035 |
-| Top-1 错误数 | 16 | 16 |
-| Top-1 准确率 | 98.48% | 98.48% |
-| Top-5 准确率 | 99.14% | 99.14% |
-| 支持类别 Macro-F1 | 99.10% | 99.10% |
-| 0.95 门槛下接受数 | 1,011 | 1,011 |
-| 其中错误接受数 | 4 | 4 |
-| 需要复核数 | 40 | 40 |
+| Crops | 1,051 | 1,051 |
+| Classes with test ground truth | 49 | 49 |
+| Top-1 correct | 1,035 | 1,035 |
+| Top-1 errors | 16 | 16 |
+| Top-1 accuracy | 98.48% | 98.48% |
+| Top-5 accuracy | 99.14% | 99.14% |
+| Supported-class Macro-F1 | 99.10% | 99.10% |
+| Accepted at threshold 0.95 | 1,011 | 1,011 |
+| Incorrect acceptances among them | 4 | 4 |
+| Requiring review | 40 | 40 |
 
-全部 1,051 张裁剪的第一名、前五名有序候选和 0.95 接受判定一致，类别顺序也一致；C++ 相对参考实现**新增错误 0，修正错误 0**。
+All 1,051 crops matched in first candidate, ordered Top-5 candidates, and acceptance at 0.95. Class order also matched. C++ **introduced 0 errors and corrected 0 errors** relative to the reference.
 
-| 数值比较 | 实测最大绝对差 |
+| Numerical comparison | Measured maximum absolute difference |
 | --- | ---: |
-| 1024 维特征 | `2.2351741790771484e-8` |
-| 分类概率 | `4.76837158203125e-7` |
+| 1024-dimensional features | `2.2351741790771484e-8` |
+| Classification probabilities | `4.76837158203125e-7` |
 
-两者通过数值容差检查，但特征和概率不是逐位相同。本轮比较使用绝对容差：特征 `2e-5`、概率 `5e-6`，相对容差为 0；候选顺序与接受判定另外检查，不能只凭浮点数组接近就认定决策不变。
+Numerical-tolerance checks passed, although features and probabilities were not bitwise identical. Absolute tolerances were `2e-5` for features and `5e-6` for probabilities, with relative tolerance 0. Candidate order and acceptance were checked separately. Similar floating-point arrays alone cannot establish unchanged decisions.
 
-接受与复核统计是已对齐的已知身份裁剪上的分类结果，不包含原图检测漏检或质量过滤，也不代表未知身份误接受率。49 是这份留出集有真值支持的类别数，不是模型内置类别数；模型仍包含 50 个身份。
+Acceptance and review counts describe classification of aligned known-identity crops. Original-image detection failures and quality filtering are excluded, and the counts do not measure false acceptance of unknown identities. The 49 classes are those supported by ground truth in this holdout. The model still contains 50 identities.
 
-### 4.2 原图与直接解码路径
+### 4.2 Originals and direct decoding
 
-12 张原图、14 张检测人脸分别通过预解码 BGR 路径和原生直接解码压缩文件路径进行比较。结果为：
+The 12 originals and 14 detected faces were compared through both predecoded BGR and native direct decoding of compressed files.
 
-- 人脸数量、检测框、检测分数、质量分数一致。
-- 全部 14 张脸的候选顺序与接受／复核决策一致。
-- 两条路径的分类概率最大绝对差均为 `2.384185791015625e-7`。
-- 解码后的图像尺寸一致；Python 工作进程之间、工作进程与输入准备阶段的解码结果一致。
+- Face counts, boxes, detection scores, and quality scores matched.
+- Candidate order and acceptance/review decisions matched for all 14 faces.
+- Maximum absolute classification-probability difference was `2.384185791015625e-7` for both paths.
+- Decoded image dimensions matched. Decoding results matched across Python workers and between workers and input preparation.
 
-这组结果覆盖了实际原图流程，但只有 12 张图片，不能覆盖所有 JPEG 编码方式、EXIF 方向、极端尺寸或所有重叠人脸情况。
+This covers the real original-image pipeline but includes only 12 images. It cannot cover all JPEG encodings, EXIF orientations, extreme dimensions, or overlapping-face cases.
 
-### 4.3 结论的适用范围
+### 4.3 Scope of conclusions
 
-目前可以确认：**在本轮 N150 输入上，C++ / Go 方案中的 C++ 推理核心没有引入身份与接受决策退步**，并且 Linux 原生服务能够加载和通过已执行的 HTTP 集成检查。
+**On these N150 inputs, the C++ inference core in the C++/Go solution introduced no regression in identity or acceptance decisions.** The native Linux service loaded and passed the HTTP integration checks performed.
 
-这不是新的独立泛化证明。历史留出集曾用于模型选择，图像之间也可能存在来源相关性；两个实现给出相同的错误身份仍属于“一致”，不属于“识别正确”。未知人物、图库外身份和任意输入的拒识能力需要另外建立数据与指标。
+This provides no new independent generalization proof. The historical holdout had been used in model selection, and images may share source correlations. Both implementations returning the same incorrect identity still counts as parity without establishing correctness. Rejection of unknown people, identities outside the gallery, and arbitrary inputs requires separate data and metrics.
 
-全量 1,051 裁剪对照目前覆盖 N150 配置下的 Python 与 C++。下面的 `python_original` 组恢复了另一套线程设置，HTTP 实验已检查三组在这 12 张原图上的结果一致性；不能把它说成旧线程组也重新完成了全量 1,051 裁剪验证。
+The full 1,051-crop comparison covers Python and C++ under the N150 configuration. The `python_original` group below restores different thread settings. HTTP tests checked all three groups on the 12 originals, without establishing a fresh full 1,051-crop check for the old-thread group.
 
-## 5. 三组 HTTP 性能实验协议
+## 5. Three-way HTTP performance protocol
 
-### 5.1 三组分别回答什么问题
+### 5.1 Questions addressed by the groups
 
-| 组名 | 实现与环境 | 骨干 intra-op | 骨干调度 | 自旋 |
+| Group | Implementation and environment | Backbone intra-op | Backbone scheduling | Spinning |
 | --- | --- | ---: | --- | --- |
-| `python_original` | 当前 Python 源码与当前锁定环境，复现生产旧线程配置 | 每骨干 2 线程 | 顺序 | 开 |
-| `python_n150` | 相同 Python 源码、解释器与依赖，使用 N150 配置 | 每骨干 1 线程 | 并行 | 关 |
-| `native_n150` | C++ 核心与 Go HTTP，使用匹配的 N150 配置 | 每骨干 1 线程 | 并行 | 关 |
+| `python_original` | Current Python source and locked environment reproducing old production thread settings | 2 threads per backbone | Sequential | On |
+| `python_n150` | Same Python source, interpreter, and dependencies with N150 settings | 1 thread per backbone | Parallel | Off |
+| `native_n150` | C++ core and Go HTTP with matching N150 settings | 1 thread per backbone | Parallel | Off |
 
-`python_original` 中的 “original” **只指复现旧运行参数**。它使用当前 Python 3.12.3 环境和当前源码，并不是直接测量现有生产 Python 3.13 服务，也不是向生产端口发送基准请求。两组 Python 的解释器和依赖相同，便于把线程配置影响与环境版本变化分开。
+In `python_original`, original **refers only to reproducing old runtime parameters**. It uses the current Python 3.12.3 environment and source. It does not directly measure the existing production Python 3.13 service or send benchmark requests to its production port. Both Python groups share interpreter and dependencies to separate thread-configuration effects from environment-version changes.
 
-比较 `python_original` 和 `python_n150`，主要观察配置变化；比较 `python_n150` 和 `native_n150`，观察同一模型与调度配置下完整运行时迁移的变化。后者仍包含图像解码、对象分配和 HTTP 实现的差别，不能全部解释成 C++ 语言本身的收益。
+Comparing `python_original` with `python_n150` primarily examines configuration. Comparing `python_n150` with `native_n150` examines full runtime migration with the same model and scheduling. The latter still includes differences in decoding, object allocation, and HTTP implementation, so gains cannot all be attributed to C++ itself.
 
-### 5.2 请求与运行顺序
+### 5.2 Requests and run order
 
-正式协议在首个计时进程开始前固定。每组启动三个独立的新服务进程，每个进程使用相同的 12 张原图：先完整预热一轮，再计时四轮，即 **12 个预热请求、48 个计时请求**。
+The formal protocol was fixed before the first timed process began. Each group started three independent fresh service processes. Each used the same 12 originals for one full warmup round followed by four timed rounds, giving **12 warmup requests and 48 timed requests** per process.
 
-三个重复的启动顺序为：
+The three repetition orders were as follows.
 
-1. `python_original` → `python_n150` → `native_n150`。
-2. `python_n150` → `native_n150` → `python_original`。
-3. `native_n150` → `python_original` → `python_n150`。
+1. `python_original` → `python_n150` → `native_n150`.
+2. `python_n150` → `native_n150` → `python_original`.
+3. `native_n150` → `python_original` → `python_n150`.
 
-共九个待测进程、432 个计时请求。一次只运行一个待测服务，构建和正确性任务不与正式计时重叠；生产及其他后台服务继续运行并记录负载。这种轮换减少固定先后顺序的影响，但不能消除所有温度、缓存和背景任务波动。
+There were nine tested processes and 432 timed requests. One tested service ran at a time, without overlapping builds or correctness jobs during formal timing. Production and other background services continued running with load recorded. Rotation reduces fixed-order effects without eliminating temperature, cache, or background-task variation.
 
-实验还在每个计时请求上检查三种配置之间的输出一致性。性能汇总必须同时确认完成状态、进程数量、请求数量和结果对照，不能仅靠部分耗时输出判断实验完成。
+Every timed request also underwent output-parity checks across the three configurations. Performance summaries must confirm completion status, process counts, request counts, and output comparisons together. Partial timing output alone cannot establish completion.
 
-### 5.3 各指标怎样计算
+### 5.3 Metric calculation
 
-| 指标 | 定义与边界 |
+| Metric | Definition and limits |
 | --- | --- |
-| HTTP wall time | 本机客户端上传至解析 JSON 响应的完整时间，包含本机传输和响应处理 |
-| 服务端处理时间 | 服务记录的处理范围，包含读取、解码与推理；不包含此前的 multipart 解析和排队 |
-| 计时区间 CPU 时间 | 48 个计时请求前后 `/proc/<pid>/stat` 的 `utime + stime` 增量，除以系统时钟频率 |
-| 生命周期 CPU 时间 | `wait4` 返回的进程累计 CPU，包含加载、预热和关闭，与计时区间 CPU 分开保存 |
-| 峰值 RSS | 服务进程完整运行中的峰值，包括模型加载、预热与大图处理；Linux 的 KiB 换算为 MiB |
-| 启动时间 | 新进程启动至就绪；新进程不代表冷文件系统缓存 |
+| HTTP wall time | Full time from local-client upload through JSON-response parsing, including local transfer and response handling |
+| Server processing time | Service-recorded scope including reading, decoding, and inference, excluding preceding multipart parsing and queuing |
+| Timed-interval CPU time | Increase in `/proc/<pid>/stat` `utime + stime` across 48 timed requests, divided by system clock frequency |
+| Lifetime CPU time | Cumulative process CPU returned by `wait4`, including loading, warmup, and shutdown, stored separately from timed-interval CPU |
+| Peak RSS | Peak across the full service-process lifetime, including model loading, warmup, and large-image handling, converting Linux KiB to MiB |
+| Startup time | Fresh-process launch to readiness. Fresh processes do not imply cold filesystem caches |
 
-均值、P50 和 P95 先在每个进程的 48 个请求内计算，再对同组的三个进程指标取中位数。分位数采用 nearest-rank：将 48 个值升序排列，P50 取第 24 个，P95 取第 46 个。**不把三个进程的 144 个请求合并后重新计算 P95**。
+Mean, P50, and P95 were calculated within each process's 48 requests, then the median of the three process metrics was taken within each group. Quantiles used nearest rank. After sorting 48 values, P50 takes the 24th and P95 the 46th. **The three processes' 144 requests were not pooled to recalculate P95.**
 
-CPU 时间是所有相关线程累计消耗的处理器时间，不等于用户等待时间，也不等于电量。没有整机功耗采样时，不把 CPU 时间比例直接写成节电比例。峰值 RSS 也不包含所有宿主机和其他服务内存，不能据此宣称整机总占用。
+CPU time accumulates processor time across all relevant threads. It measures neither user wait nor electrical energy. Without whole-machine power sampling, CPU-time ratios cannot be presented as energy savings. Peak RSS also excludes other host and service memory and cannot establish whole-machine memory use.
 
-## 6. 已完成的三组基线结果
+## 6. Completed three-way baseline results
 
-### 6.1 完成状态与汇总
+### 6.1 Completion and summary
 
-最终报告标记为 `complete`，三组各完成三个进程，每进程 48 个计时请求，共 **432 个计时请求**。三个重复中分别执行三种配置的两两对照，共九组对照，全部请求的人脸数量、候选顺序与决策检查通过。
+The final report was marked `complete`. Each group completed three processes with 48 timed requests per process, totaling **432 timed requests**. Each repetition compared all pairs of configurations, giving nine comparisons. Face counts, candidate order, and decisions passed for every request.
 
-独立审计重新核对了报告的完整性、计数、汇总算术和相对变化，结果为通过。它没有重新读取私人逐样本输出，也没有把“性能更好”设为通过条件；性能结论仍来自下面的实际数据。
+An independent audit passed checks of completeness, counts, summary arithmetic, and relative changes. It did not reread private per-sample outputs or require better performance as a passing condition. Performance conclusions follow the measured data below.
 
-下表每格都是对应指标的**三个进程中位数**。时间单位为秒，CPU 时间是累计处理器时间：
+Each table cell is the **median of three process-level metrics**. Times are in seconds, and CPU time is cumulative processor time.
 
-| 指标 | `python_original` | `python_n150` | `native_n150` |
+| Metric | `python_original` | `python_n150` | `native_n150` |
 | --- | ---: | ---: | ---: |
-| 平均 HTTP 耗时，s/请求 | 8.277 | 11.415 | 11.401 |
-| HTTP P50，s/请求 | 7.119 | 9.797 | 9.780 |
-| HTTP P95，s/请求 | 21.000 | 29.207 | 29.165 |
-| 平均服务端处理耗时，s/请求 | 8.252 | 11.393 | 11.380 |
-| 计时区间 CPU 时间，CPU s/请求 | 20.937 | 13.731 | 13.710 |
-| 计时区间平均占用核数 | 2.529 | 1.203 | 1.203 |
-| 进程峰值 RSS，MiB | 751.27 | 758.95 | 906.97 |
+| Mean HTTP time, s/request | 8.277 | 11.415 | 11.401 |
+| HTTP P50, s/request | 7.119 | 9.797 | 9.780 |
+| HTTP P95, s/request | 21.000 | 29.207 | 29.165 |
+| Mean server processing time, s/request | 8.252 | 11.393 | 11.380 |
+| Timed-interval CPU time, CPU s/request | 20.937 | 13.731 | 13.710 |
+| Mean cores occupied during timing | 2.529 | 1.203 | 1.203 |
+| Process peak RSS, MiB | 751.27 | 758.95 | 906.97 |
 
-这些是固定 12 张图片的混合工作负载，其中包含一张三脸图。P95 会受到三脸图的计算量影响，不能解读为固定单脸输入偶然出现了二十多秒的随机尾部延迟。表中也不是现有生产端口的直接测量。
+The workload is the fixed mixture of 12 images, including one with three faces. Three-face computation affects P95, which cannot be interpreted as occasional random delays above twenty seconds for a fixed single-face input. The table also does not directly measure the existing production port.
 
-### 6.2 配置变化：省 CPU，但等待更久
+### 6.2 Configuration changes reduce CPU time and increase wait
 
-`python_n150` 相对 `python_original`：
+Relative to `python_original`, `python_n150` produced these changes.
 
-- 计时区间 CPU 时间从 **20.937 降至 13.731 CPU s/请求，减少 34.4%**。
-- 平均 HTTP 耗时从 **8.277 增至 11.415 s/请求，增加 37.9%**；P95 增加约 39.1%。
-- 峰值 RSS 从 751.27 增至 758.95 MiB，增加约 1.0%。
+- Timed CPU time decreased from **20.937 to 13.731 CPU s/request, down 34.4%**.
+- Mean HTTP time increased from **8.277 to 11.415 s/request, up 37.9%**, with P95 up about 39.1%.
+- Peak RSS increased from 751.27 to 758.95 MiB, up about 1.0%.
 
-因此，这个 N150 预设在本轮输入上提供的是 CPU 工作量与延迟之间的取舍，没有同时降低两者。原线程组的平均占用约 2.53 核，N150 预设约 1.20 核；累计 CPU 时间下降并不意味着用户等待更短，也不能直接换算成整机节电比例。
+This N150 preset traded CPU work against latency on these inputs, without reducing both. The old-thread group occupied about 2.53 cores on average and the N150 preset about 1.20. Reduced cumulative CPU time does not imply shorter waits and cannot directly establish whole-machine energy savings.
 
-### 6.3 语言迁移：本轮没有证明更快或更省内存
+### 6.3 Language migration did not establish faster execution or lower memory
 
-`native_n150` 相对同配置的 `python_n150`，平均 HTTP 耗时仅低约 **0.12%**，P95 低约 0.14%，计时区间 CPU 时间低约 0.15%。三个进程平均耗时的最大值与最小值之差，分别约为 Python 中位数的 0.24%、原生中位数的 0.65%；0.12% 的组间差小于这些重复进程本身的变化幅度，不能称为可靠提速。
+Against `python_n150` with matching settings, `native_n150` had only about **0.12%** lower mean HTTP time, 0.14% lower P95, and 0.15% lower timed CPU time. The ranges between highest and lowest process mean times were about 0.24% of the Python median and 0.65% of the native median. The 0.12% intergroup difference was smaller than these repeated-process variations and cannot be called a reliable speedup.
 
-原生峰值 RSS 为 **906.97 MiB**，相对同配置 Python 的 **758.95 MiB** 高约 **148.02 MiB，即 19.5%**。因此不能沿用此前 Mac 结果，声称这个 N150 原生实现已经降低内存。
+Native peak RSS was **906.97 MiB**, about **148.02 MiB or 19.5%** above the matching Python result of **758.95 MiB**. Earlier Mac results therefore cannot establish reduced memory for this N150 native implementation.
 
-相对旧线程 Python 组，原生实现的平均 HTTP 耗时仍高约 37.7%、峰值 RSS 高约 20.7%，计时区间 CPU 时间低约 34.5%。这些组合变化同时包含调度配置与实现差异，不能全部归因于 Go 或 C++。本轮结果支持“准确率和决策回归通过”，不支持“当前原生实现已经全面优于现有参考实现”。
+Against the old-thread Python group, native mean HTTP time was still about 37.7% higher, peak RSS 20.7% higher, and timed CPU time 34.5% lower. These combined changes include scheduling and implementation differences and cannot all be attributed to Go or C++. The results support passed accuracy and decision regression checks, without establishing comprehensive superiority over the reference.
 
-### 6.4 环境与结论边界
+### 6.4 Environment and limits
 
-九个进程在启动前、预热后和计时请求后共记录 27 次环境快照。可用内存约 4,439.59–5,311.02 MiB，已用 swap 保持 1.5 MiB；工作目录可用空间约 60.67 GiB。频率快照覆盖约 700–3600 MHz，温度记录来自不同热区。这些是离散采样，不能排除请求中途的短暂频率、温度或背景负载变化，也不能单凭它们认定耗时原因。
+Nine processes recorded 27 environmental snapshots before startup, after warmup, and after timed requests. Available memory ranged about 4,439.59–5,311.02 MiB, used swap stayed at 1.5 MiB, and working-directory free space was about 60.67 GiB. Frequency snapshots covered about 700–3600 MHz, with temperature readings from different thermal zones. Discrete samples cannot exclude transient frequency, temperature, or background-load changes within requests or establish the cause of elapsed times by themselves.
 
-这轮三进程重复用于描述当前固定工作负载，未建立长期稳定性、并发吞吐、功耗或任意用户图片的保证。Mac 与 N150 使用的 HTTP 原图不同，不能直接拿两份表相除得到硬件速度比。
+The three-process repeats describe this fixed workload and provide no guarantee of long-term stability, concurrent throughput, power use, or arbitrary user-image behavior. Mac and N150 used different HTTP originals, so ratios between their tables cannot establish a hardware-speed ratio.
 
-FTZ 独立跟进实验的小样本诊断、候选核心检查、全量数值回归与 HTTP 测量也已完成并审计，见第 8 节。它不改变本节已冻结的三组基线数据。
+The independent FTZ follow-up completed and audited its small-sample diagnosis, candidate-core checks, full numerical regression, and HTTP measurements, described in Section 8. It does not change this section's frozen three-way baseline.
 
-## 7. 本地复核证据
+## 7. Local review evidence
 
-以下路径均相对于仓库，属于忽略目录内的本地证据，克隆仓库不会附带这些文件：
+These repository-relative paths are local evidence in ignored directories. Cloning the repository does not include them.
 
-| 证据位置 | 内容 |
+| Evidence path | Contents |
 | --- | --- |
-| `data/experiments/n150-remote-20261027/benchmark-protocol.json` | 事前固定的输入、三组协议、计时与发布范围 |
-| `data/experiments/n150-remote-20261027/source-snapshot.json` | 本轮源码快照与打包摘要，用于确认构建来源 |
-| `data/experiments/n150-remote-20261027/hardware.json` | CPU 可用范围、型号、调频、频率和温度快照 |
-| `data/experiments/n150-remote-20261027/cpu-constraints.json` | 正式测量中的进程优先级、CPU affinity 与 cgroup 配额快照 |
-| `data/experiments/n150-remote-20261027/native-loader-check.json` | Linux 产物摘要、动态依赖解析和相对加载路径检查 |
-| `data/experiments/n150-remote-20261027/parity-linux.json` | 全部裁剪和原图的独立进程数值、分类与接受结果 |
-| `data/experiments/n150-remote-20261027/background-before-http.log` | 正式 HTTP 实验前的后台服务资源快照 |
-| `data/experiments/n150-remote-20261027/http-three-way.json` | 九个进程、432 个计时请求、两两结果对照及最终性能汇总 |
-| `data/experiments/n150-remote-20261027/baseline-audit.json` | 独立的完整性与汇总算术审计、相对变化和环境快照范围 |
-| `data/experiments/n150-remote-20261027/denormal-probe-01.json` | FTZ/DAZ 关闭与开启的小样本顺序 kernel 诊断 |
-| `data/experiments/n150-remote-20261027/denormal-weight-audit.json` | 原始 ONNX 顶层 FP32 初始化张量的次正规数计数与资产摘要 |
-| `data/experiments/n150-remote-20261027/ftz-build.json` | 独立候选构建、guard/CTest 检查及原构建未变的记录 |
-| `data/experiments/n150-remote-20261027/ftz-smoke.json` | 候选 C API 的三裁剪启动检查，不是 HTTP 或全量准确率报告 |
-| `data/experiments/n150-remote-20261027/ftz-candidate-parity.json` | 新候选核心与已冻结 Python 缓存的全量裁剪、BGR 原图及直接解码对照 |
-| `data/experiments/n150-remote-20261027/ftz-http.json` | 三个候选 HTTP 进程、144 个计时响应、实际核心库绑定和最终汇总 |
-| `data/experiments/n150-remote-20261027/candidate-audit.json` | 候选输入报告摘要、计数、汇总与相对变化的独立审计 |
-| `data/experiments/n150-remote-20261027/ftz-candidate/` | 原始实验补丁、浮点状态 guard 与独立测试，后于 2026-10-28 集成 |
+| `data/experiments/n150-remote-20261027/benchmark-protocol.json` | Inputs, three-way protocol, timing, and publication scope fixed beforehand |
+| `data/experiments/n150-remote-20261027/source-snapshot.json` | Source snapshot and package hashes identifying the build origin |
+| `data/experiments/n150-remote-20261027/hardware.json` | Available CPU range, model, governor, frequency, and temperature snapshots |
+| `data/experiments/n150-remote-20261027/cpu-constraints.json` | Process priority, CPU affinity, and cgroup quotas during formal measurement |
+| `data/experiments/n150-remote-20261027/native-loader-check.json` | Linux artifact hashes, dynamic dependency resolution, and relative loading checks |
+| `data/experiments/n150-remote-20261027/parity-linux.json` | Separate-worker numerical, classification, and acceptance results for all crops and originals |
+| `data/experiments/n150-remote-20261027/background-before-http.log` | Background-service resources before formal HTTP testing |
+| `data/experiments/n150-remote-20261027/http-three-way.json` | Nine processes, 432 timed requests, pairwise parity, and final performance summary |
+| `data/experiments/n150-remote-20261027/baseline-audit.json` | Independent completeness and arithmetic audit, relative changes, and environment ranges |
+| `data/experiments/n150-remote-20261027/denormal-probe-01.json` | Small-sample sequential-kernel diagnosis with FTZ/DAZ off and on |
+| `data/experiments/n150-remote-20261027/denormal-weight-audit.json` | Subnormal counts in original top-level ONNX FP32 initializers and asset hashes |
+| `data/experiments/n150-remote-20261027/ftz-build.json` | Separate candidate build, guard/CTest checks, and unchanged original-build record |
+| `data/experiments/n150-remote-20261027/ftz-smoke.json` | Candidate C API startup check on three crops, outside HTTP and full-accuracy evaluation |
+| `data/experiments/n150-remote-20261027/ftz-candidate-parity.json` | Full crop, BGR-original, and direct-decoding comparisons between the new core and frozen Python cache |
+| `data/experiments/n150-remote-20261027/ftz-http.json` | Three candidate HTTP processes, 144 timed responses, actual core-library binding, and summary |
+| `data/experiments/n150-remote-20261027/candidate-audit.json` | Independent audit of candidate-input report hashes, counts, summaries, and relative changes |
+| `data/experiments/n150-remote-20261027/ftz-candidate/` | Original experimental patch, floating-point-state guard, and separate tests, integrated later on 2026-10-28 |
 
-公开文档只保留汇总，不附照片、身份清单、逐样本特征、原始日志、服务器连接信息或密钥。模型 Release 仍遵守项目发布约定，不把测试输入、应用部署材料或实验私有记录作为附件发布。
+Public documentation retains aggregates only and excludes photos, identity lists, per-sample features, raw logs, server connection information, and keys. Model Releases continue to follow project rules and exclude test inputs, application-deployment materials, and private experiment records from attachments.
 
-## 8. FTZ / DAZ 独立跟进实验
+<a id="ftz-daz-follow-up"></a>
 
-本节是三组基线完成后的独立实验。三个裁剪上的数值与 kernel 诊断、独立候选核心构建、小样本 C API 检查、全量 1,051 裁剪和 12 原图回归，以及**三个新进程的 HTTP 测量均已完成**。最终报告通过独立审计。本节结果不回填第 6 节，也不代表已将实验配置正式用于生产。
+## 8. Independent FTZ / DAZ follow-up experiment
 
-### 8.1 次正规数为什么值得检查
+This was a separate experiment after completion of the three-way baseline. Numerical and kernel diagnosis on three crops, an independent candidate-core build, a small C API check, regression on all 1,051 crops and 12 originals, and **HTTP measurements in three fresh processes were all completed**. The final report passed independent audit. These results do not replace Section 6 or mean the experimental configuration had entered production at that time.
 
-FP32 能表示非常接近零的非零数。其中绝对值低于最小正规数 `2^-126` 的非零值称为次正规数（subnormal，也常称 denormal）。它们支持逐渐下溢，但在特定处理器和指令路径上可能带来显著计算开销。
+### 8.1 Why subnormal numbers warranted investigation
 
-对原始 ONNX 的 FP32 初始化张量进行只读计数，得到：
+FP32 represents nonzero values very close to zero. Nonzero values below the smallest normal magnitude, `2^-126`, are called subnormal or denormal numbers. They support gradual underflow but may incur substantial computational cost on particular processors and instruction paths.
 
-| 模型 | 次正规数值数量 | 包含此类值的初始化张量数 |
+A read-only count of FP32 initializer tensors in the original ONNX files produced the following results.
+
+| Model | Subnormal values | Initializer tensors containing them |
 | --- | ---: | ---: |
 | AdaFace IR101 | 202,104 | 24 |
 | R50 | 30,184 | 25 |
 
-统计口径为原始 ONNX 顶层稠密 `FLOAT` 初始化张量的全部 float32 存储元素，排除正负零，保留 `0 < abs(x) < 2^-126`。也可按位模式复核：去掉符号位后的整数严格位于 `0` 与 `0x00800000` 之间。计数包含卷积权重、PReLU 和 BatchNorm 保存值，不是只数卷积权重或可训练参数，也不是运行中激活或人脸特征的统计；只读审计及资产摘要保存在 `denormal-weight-audit.json`。存在这些值是排查线索，单靠数量不能证明它们解释了全部耗时。
+The count covers all stored float32 elements in original top-level dense `FLOAT` ONNX initializers, excludes positive and negative zero, and retains `0 < abs(x) < 2^-126`. A bit-pattern check gives integers strictly between `0` and `0x00800000` after removing the sign bit. Counts include convolution weights, PReLU, and stored BatchNorm values. They do not count only convolution weights or trainable parameters and do not measure runtime activations or face features. The read-only audit and asset hashes are in `denormal-weight-audit.json`. These values are a diagnostic clue, but their counts alone cannot explain all elapsed time.
 
-Intel 的 x86 浮点控制寄存器 MXCSR 提供两个相关模式：**FTZ** 将适用浮点指令产生的次正规结果置零；**DAZ** 将输入给这些指令的次正规操作数按零处理。两者影响 SSE/AVX 浮点运算的语义和性能，不是无条件保证更快的开关。[Intel FTZ / DAZ 说明](https://www.intel.com/content/www/us/en/docs/dpcpp-cpp-compiler/developer-guide-reference/2025-1/set-the-ftz-and-daz-flags.html)
+Intel's x86 floating-point control register MXCSR provides related modes. **FTZ** flushes subnormal results from applicable floating-point instructions to zero. **DAZ** treats subnormal input operands to those instructions as zero. Both affect SSE/AVX floating-point semantics and performance without unconditionally guaranteeing speed gains. [Intel FTZ / DAZ documentation](https://www.intel.com/content/www/us/en/docs/dpcpp-cpp-compiler/developer-guide-reference/2025-1/set-the-ftz-and-daz-flags.html)
 
-本实验保持原 FP32 权重文件及其摘要不变，没有把网络转成 FP16 或 INT8，也没有重训。但**浮点计算对次正规数的处理语义已经改变**，所以“文件没变”不能推出准确率必然不变。ONNX Runtime 1.29.0 提供 `session.set_denormal_as_zero`，默认关闭；其官方说明明确提示开启可能影响模型准确率。[ORT 1.29.0 配置键定义](https://github.com/microsoft/onnxruntime/blob/v1.29.0/include/onnxruntime/core/session/onnxruntime_session_options_config_keys.h)
+The experiment kept original FP32 weight files and hashes unchanged, without FP16 or INT8 conversion or retraining. However, **floating-point subnormal-handling semantics changed**, so unchanged files do not guarantee unchanged accuracy. ONNX Runtime 1.29.0 provides `session.set_denormal_as_zero`, disabled by default, with an explicit warning that enabling it can affect model accuracy. [ORT 1.29.0 configuration-key definition](https://github.com/microsoft/onnxruntime/blob/v1.29.0/include/onnxruntime/core/session/onnxruntime_session_options_config_keys.h)
 
-### 8.2 三裁剪的受控诊断
+### 8.2 Controlled three-crop diagnosis
 
-诊断选择固定三个对齐裁剪，分别在独立工作进程中设置该 ORT 选项为 `0` 与 `1`，执行顺序为先关闭、后开启。两个骨干均采用单线程、关闭自旋、顺序执行；输入预处理沿用参考实现。每组预热后进行三轮计时，共九个裁剪观测。
+Three fixed aligned crops were selected. Separate workers set that ORT option to `0` and `1`, executing disabled first and enabled second. Both backbones used one thread, disabled spinning, and sequential execution. Input preprocessing followed the reference. After warmup, three timed rounds yielded nine crop observations per group.
 
-计时只包围每个骨干的 `Session.run`。下表是九个观测的中位数；“两骨干合计”是每个裁剪这两次调用的合计耗时中位数，**不是处理全部三个裁剪的总时间**。
+Timing surrounded only each backbone's `Session.run`. The table gives medians of nine observations. The combined-backbone row is the median sum of the two calls for each crop and **does not give total time to process all three crops**.
 
-| kernel 范围 | FTZ/DAZ 关闭，s/裁剪 | FTZ/DAZ 开启，s/裁剪 | 关闭耗时 / 开启耗时 |
+| Kernel scope | FTZ/DAZ off, s/crop | FTZ/DAZ on, s/crop | Off / on time ratio |
 | --- | ---: | ---: | ---: |
-| AdaFace | 9.614829 | 0.470143 | 20.45 倍 |
-| R50 | 1.857830 | 0.250646 | 7.41 倍 |
-| 两骨干顺序合计 | 11.470675 | 0.720563 | 15.919 倍 |
+| AdaFace | 9.614829 | 0.470143 | 20.45× |
+| R50 | 1.857830 | 0.250646 | 7.41× |
+| Both backbones sequentially | 11.470675 | 0.720563 | 15.919× |
 
-三个裁剪上，两种模式的骨干原始输出、融合特征和最终概率均逐项相同，Top-1、Top-5 顺序与 0.95 接受判定也一致。另以运行时算术探针确认主调用线程的次正规输入和结果处理模式发生改变。
+Across the three crops, raw backbone outputs, fused features, and final probabilities were itemwise identical between modes. Top-1, ordered Top-5, and acceptance at 0.95 also matched. A separate runtime arithmetic probe confirmed that the main calling thread's handling of subnormal inputs and results changed.
 
-这为“次正规数处理是当前机器上值得继续验证的性能因素”提供了直接诊断依据，但计时不包含检测、大图解码、HTTP 或请求排队，也只覆盖三个样本。诊断进程中的浮点模式还作用于未计时的预处理和分类运算；不能把这份结果当作已经隔离验证了最终 C++ 服务的全部数值行为。固定先后顺序和单次诊断同样没有消除所有运行环境差异。
+This directly supports further investigation of subnormal handling as a performance factor on this machine. Timings exclude detection, large-image decoding, HTTP, and request queues and cover only three samples. Floating-point mode in these diagnostic processes also affected untimed preprocessing and classification, so these results do not isolate all numerical behavior of the final C++ service. Fixed ordering and a single diagnostic run also leave environmental differences unresolved.
 
-### 8.3 候选核心怎样管理线程浮点状态
+### 8.3 Candidate-core management of thread floating-point state
 
-仅在创建 Session 时设置选项还不够。ORT 1.29.0 的实现对初始调用线程使用一次性初始化，而 Session 自有线程池另外接收该配置；不能假设以后任何调用线程都会自动取得所需的 MXCSR 状态。[ORT 1.29.0 Session 初始化实现](https://github.com/microsoft/onnxruntime/blob/v1.29.0/onnxruntime/core/session/inference_session.cc)
+Setting the option only during Session creation is insufficient. ORT 1.29.0 uses one-time initialization on the initial calling thread, while Session-owned thread pools receive the setting separately. Later callers cannot be assumed to inherit the required MXCSR state. [ORT 1.29.0 Session initialization](https://github.com/microsoft/onnxruntime/blob/v1.29.0/onnxruntime/core/session/inference_session.cc)
 
-Go 的 goroutine 与操作系统线程并非固定一一对应，线程局部状态不应依靠先前另一次 cgo 调用留下的设置。[Go 的线程绑定说明](https://pkg.go.dev/runtime#LockOSThread) 因此候选把设置、推理和恢复放在同一次 C++ 调用内：
+Go goroutines do not have a fixed one-to-one relationship with operating-system threads. Thread-local state cannot rely on settings left by an earlier cgo call. [Go thread-binding documentation](https://pkg.go.dev/runtime#LockOSThread) The candidate therefore performs setup, inference, and restoration within the same C++ call.
 
-1. 在每次创建 ORT Session 及每次 `Model::run` 的作用域开始时，保存调用线程的完整 MXCSR。
-2. 根据实验配置显式开启或关闭 FTZ 与 DAZ，保留其他控制位；同时用 ORT Session 选项设置其自有线程池策略。
-3. 离开作用域时由 RAII guard 恢复完整原状态，正常返回和异常展开均恢复。持久 R50 worker 也经过相同的 `Model::run` guard。
+1. At the start of each ORT Session creation and each `Model::run` scope, save the calling thread's complete MXCSR.
+2. Explicitly enable or disable FTZ and DAZ according to experimental configuration, preserving other control bits. Apply the ORT Session option to its own thread-pool policy as well.
+3. Restore the complete original state through an RAII guard on both normal return and exception unwinding. The persistent R50 worker uses the same `Model::run` guard.
 
-这样不需要在多个 cgo 调用之间保留浮点状态，也不会把本次推理模式留给后续 Go 调用。图像预处理和分类头位于 guard 外。候选没有开启 `fast-math`；它仍是对明确执行范围内浮点模式的实验。
+This avoids retaining floating-point state across cgo calls or leaving this inference mode for subsequent Go calls. Image preprocessing and the head are outside the guard. The candidate does not enable `fast-math` and remains an experiment in floating-point mode within an explicitly bounded execution scope.
 
-当前 guard 的 `true` 模式仅支持 **Linux x86_64 且 MXCSR 支持 FTZ/DAZ** 的环境；不支持的平台，包括当前 Mac ARM，显式拒绝开启，不伪装成已生效。Linux 上已通过开关、嵌套、异常恢复、真实次正规算术及 **8 个持久线程反复调用**的 guard 检查，也通过候选 CTest。guard 测试证明状态管理的已测行为，不能代替 ORT 完整模型的准确率验证。
+The guard's `true` mode currently supports only **Linux x86_64 with MXCSR FTZ/DAZ support**. Unsupported platforms, including the current Mac ARM machine, explicitly reject enabling it. Linux guard checks passed toggling, nesting, exception restoration, real subnormal arithmetic, and **repeated calls from 8 persistent threads**, as did candidate CTest. Guard tests validate tested state-management behavior without replacing full-model accuracy checks in ORT.
 
-本节实验进行时，候选只存在于忽略目录中的补丁、独立源码副本和独立共享库，产品 `native/` 源码及原基线产物未变。Go 可执行文件沿用未修改的构建，实验由候选核心与独立 JSON 配置配合完成。`runtime.flush_denormals` 是这个核心新增的严格布尔字段；**不能仅向 JSON 添加这个键，就期待旧核心库执行实验逻辑**。后续产品集成见第 9 节。
+During this experiment, the candidate existed only as a patch, separate source copy, and independent shared library in ignored directories. Product `native/` source and original baseline artifacts stayed unchanged. The Go executable reused the unmodified build, with the candidate core and separate JSON enabling the experiment. `runtime.flush_denormals` is a new strictly boolean field in that core. **Adding this key to JSON alone cannot make an old core library run the experimental logic.** Subsequent product integration is in Section 9.
 
-候选 C API 的三裁剪检查中，每张脸约 **0.492 秒**，没有执行检测和 HTTP。其特征与原生基线缓存完全相同，概率也完全相同；与 Python 缓存相比，特征相同、概率最大绝对差 `1.1920928955078125e-7`，候选顺序和接受判定一致。这只是进入全量验证的检查门槛。候选采用双骨干并行，而且 C API 包含的工作范围比顺序 kernel 诊断更宽，不能把两者耗时相除写成“FTZ 单因素提速约 23 倍”，更不能称为 HTTP 提速。
+The candidate C API's three-crop check took about **0.492 seconds** per face, without detection or HTTP. Features and probabilities were identical to the native baseline cache. Against the Python cache, features matched and the maximum absolute probability difference was `1.1920928955078125e-7`, with candidate order and acceptance unchanged. This was only a gate to full validation. The candidate ran backbones in parallel, and the C API scope was broader than sequential-kernel diagnosis. Dividing their times cannot establish a roughly 23-fold FTZ-only speedup or an HTTP speedup.
 
-### 8.4 全量回归：已通过
+### 8.4 Full regression passed
 
-候选完成了全部 1,051 裁剪及同一批 12 原图验证。参考侧使用之前完成并冻结的 **Python、FTZ 关闭**缓存，候选侧新启动 **C++、FTZ 开启**工作进程；没有重新运行 Python 参考进程，也没有在这一步测试 Go HTTP。输入、原模型资产、类别顺序及实际候选库均通过摘要绑定。
+The candidate completed checks on all 1,051 crops and the same 12 originals. The reference was the previously completed frozen **Python, FTZ-off** cache, while the candidate launched a fresh **C++, FTZ-on** worker. Python reference workers were not rerun and Go HTTP was not tested at this step. Inputs, original model assets, class order, and the actual candidate library were bound through hashes.
 
-| 全量裁剪检查 | 候选结果 |
+| Full-crop check | Candidate result |
 | --- | --- |
-| Top-1 正确数 / 错误数 | 1,035 / 16 |
-| Top-1 准确率 | 98.47764% |
-| 相对参考缓存新增错误 / 修正错误 | 0 / 0 |
-| Top-1、Top-5 顺序、0.95 判定 | 各 1,051 / 1,051 一致 |
-| 特征最大绝对差 | `2.2351741790771484e-8` |
-| 分类概率最大绝对差 | `4.76837158203125e-7` |
-| 接受 / 错误接受 / 复核 | 1,011 / 4 / 40，与参考一致 |
+| Top-1 correct / errors | 1,035 / 16 |
+| Top-1 accuracy | 98.47764% |
+| New / corrected errors against reference cache | 0 / 0 |
+| Top-1, ordered Top-5, and 0.95 decisions | Each 1,051 / 1,051 matched |
+| Maximum absolute feature difference | `2.2351741790771484e-8` |
+| Maximum absolute classification-probability difference | `4.76837158203125e-7` |
+| Accepted / incorrectly accepted / review | 1,011 / 4 / 40, matching reference |
 
-12 张原图、14 张检测人脸同时检查了预解码 BGR 和候选直接解码两条路径。两条路径的人脸数、候选顺序与接受判定全部一致；检测框、检测分数和质量分数的最大差为 0，概率最大绝对差均为 `2.384185791015625e-7`。图像尺寸与类别顺序检查也通过，报告 `all_passed=true`。
+The 12 originals and 14 detected faces were checked through both predecoded BGR and candidate direct-decoding paths. Face counts, candidate order, and acceptance all matched. Maximum box, detection-score, and quality-score differences were 0. Maximum absolute probability differences were `2.384185791015625e-7` on both paths. Image-dimension and class-order checks also passed, with report `all_passed=true`.
 
-这说明候选在本轮固定输入上没有引入决策退步。全量特征和概率仍不是与 Python 逐位相同，不能把三裁剪诊断中的精确一致扩展为全量逐位等价；也不能把历史数据回归当成新的独立准确率保证。缓存参照与分阶段执行的口径必须与后续 HTTP 数据一起保留。
+This establishes no decision regression on the fixed inputs. Full-set features and probabilities still differed bitwise from Python. Exact parity in the three-crop diagnosis cannot be extended to full-set bitwise equivalence, and regression on historical data cannot provide a new independent accuracy guarantee. The cached-reference and staged-execution definitions must accompany the subsequent HTTP data.
 
-### 8.5 候选 HTTP：已完成并审计
+### 8.5 Candidate HTTP completed and audited
 
-候选使用同一批 12 原图，完成三个新的 HTTP 服务进程。每个进程预热 12 个请求，再计时 48 个请求，合计 **36 个预热请求、144 个计时请求**。统计方法沿用基线：先分别计算每进程指标，再取三个进程的中位数，P50/P95 使用 nearest-rank，计时区间 CPU 与生命周期 CPU 分开。
+The candidate completed three new HTTP service processes using the same 12 originals. Each process warmed up for 12 requests and timed 48, giving **36 warmup and 144 timed requests** in total. Statistics followed the baseline method. Process metrics were calculated separately before taking their median. P50/P95 used nearest rank, and timed CPU and lifetime CPU were kept separate.
 
-| 指标 | FTZ 候选：三个进程指标的中位数 |
+| Metric | FTZ candidate, median of three process metrics |
 | --- | ---: |
-| 平均 HTTP 耗时 | **680.785 ms/请求** |
-| HTTP P50 | 591.256 ms/请求 |
-| HTTP P95 | 1607.468 ms/请求 |
-| 平均服务端处理耗时 | 659.466 ms/请求 |
-| 计时区间 CPU 时间 | **1032.083 CPU ms/请求** |
-| 计时区间平均占用核数 | 1.516 |
-| 进程峰值 RSS | **885.836 MiB** |
+| Mean HTTP time | **680.785 ms/request** |
+| HTTP P50 | 591.256 ms/request |
+| HTTP P95 | 1607.468 ms/request |
+| Mean server processing time | 659.466 ms/request |
+| Timed-interval CPU time | **1032.083 CPU ms/request** |
+| Mean occupied cores during timing | 1.516 |
+| Process peak RSS | **885.836 MiB** |
 
-三个进程的平均 HTTP 耗时范围为 676.934–683.204 ms。输入仍包含一张三脸图，因此 P95 不能解读为固定单脸输入的随机延迟尾部。
+Process mean HTTP times ranged from 676.934–683.204 ms. Inputs still included one three-face image, so P95 cannot represent the random latency tail for a fixed single-face input.
 
-全部 **144 个计时响应**均与冻结的 Python 原图端到端参考输出进行比较：图像尺寸、人脸数、候选顺序与接受判定通过一致性检查；检测框、检测分数和质量分数最大差为 0，概率最大绝对差为 `2.384185791015625e-7`。这里的参考是按输入顺序重复使用的 Python 原图验证缓存，不是先前保存的 HTTP 响应，也不是本阶段新启动的 Python 服务。
+All **144 timed responses** were compared with frozen end-to-end Python original-image reference output. Image dimensions, face counts, candidate order, and acceptance passed parity checks. Maximum box, detection-score, and quality-score differences were 0, and maximum absolute probability difference was `2.384185791015625e-7`. The reference reused the Python original-image validation cache in input order. It was neither saved HTTP responses nor a Python service newly launched in this phase.
 
-为防止误加载旧库，三个服务进程均在 `/v1/model` 成功后、预热和 CPU 计时开始前，检查自身 PID 的核心库映射。**3 / 3 进程**的文件设备号、inode 与候选库摘要匹配。最终独立审计核对报告摘要、请求计数、数值回归关联和汇总算术并通过；它核对记录中的产物绑定，没有重新读取远程二进制，也没有把速度达到某个门槛作为审计通过条件。
+To prevent accidental loading of the old library, each process checked its own PID's core-library mapping after a successful `/v1/model` response and before warmup and CPU timing. File device number, inode, and candidate-library hash matched in **3 / 3 processes**. The final independent audit passed report-hash, request-count, numerical-regression linkage, and summary-arithmetic checks. It checked artifact binding in records without rereading remote binaries and did not require a speed threshold to pass.
 
-与此前阶段的中位数相比：
+The following comparisons use medians from earlier phases.
 
-| 参照组 | 先前平均 HTTP / CPU 时间 | 候选平均 HTTP 变化 | 候选计时 CPU 变化 | 候选峰值 RSS 变化 |
+| Reference group | Earlier mean HTTP / CPU time | Candidate mean HTTP change | Candidate timed CPU change | Candidate peak RSS change |
 | --- | --- | ---: | ---: | ---: |
-| `python_original`：当前环境复现旧线程配置 | 8.277 s / 20.937 CPU s 每请求 | 减少 91.775%；先前耗时为候选的 12.158 倍 | 减少 95.070% | 增加 17.912%：751.270 → 885.836 MiB |
-| `native_n150`：原生基线 | 11.401 s / 13.710 CPU s 每请求 | 减少 94.029%；先前耗时为候选的 16.747 倍 | 减少 92.472% | 减少 2.330%：906.969 → 885.836 MiB |
+| `python_original`, old threads reproduced in the current environment | 8.277 s / 20.937 CPU s per request | Down 91.775%, earlier time 12.158× candidate | Down 95.070% | Up 17.912%, 751.270 → 885.836 MiB |
+| `native_n150`, native baseline | 11.401 s / 13.710 CPU s per request | Down 94.029%, earlier time 16.747× candidate | Down 92.472% | Down 2.330%, 906.969 → 885.836 MiB |
 
-这些比例明确属于**后阶段候选与先前基线的比较，不是同期交替 A/B**；热状态、频率与后台负载漂移仍可能影响具体比例。第 8.2 节另有只切换次正规数模式、相同顺序 kernel 的三裁剪受控诊断，得到约 15.919 倍的耗时比，为次正规数处理开销提供独立证据。不能把 HTTP 的整个变化归因于调用语言，也不能把 CPU 时间下降直接宣称为整机节电。
+These ratios explicitly **compare a later-phase candidate with earlier baselines, without a contemporaneous interleaved A/B test**. Thermal state, frequency, and background-load drift may affect the exact ratios. Section 8.2 separately provides a controlled three-crop diagnosis changing only subnormal mode for identical sequential kernels, with a time ratio around 15.919×. This independently supports subnormal-handling overhead. The full HTTP change cannot be attributed to calling language, and reduced CPU time cannot directly establish whole-machine energy savings.
 
-综合这次全量回归和 HTTP 结果，候选在固定输入上保持原决策，并明显减少测得的延迟和 CPU 时间；它相对旧线程 Python 仍多使用约 17.9% 峰值 RSS，没有同时满足“内存也降低”。这不是所有图片、未知身份、长期负载或其他硬件上的保证。
+Together, full regression and HTTP results show preserved decisions on fixed inputs and substantial measured reductions in latency and CPU time. Peak RSS was still about 17.9% above the old-thread Python group, so lower memory was not achieved at the same time. This provides no guarantee for all images, unknown identities, long-term loads, or other hardware.
 
-以上为 2026-10-27 完成实验时的状态，未包含当时尚未进行的生产切换。2026-10-28 的产品集成、实际启用与部署验证单列于第 9 节；压力与长期运行验收仍待完成。
+This describes the state at experiment completion on 2026-10-27, before any production switchover. Product integration, actual enablement, and deployment checks on 2026-10-28 are recorded separately in Section 9. Stress and long-term acceptance checks remain outstanding.
 
-### 8.6 测试结束后的主机核对
+### 8.6 Post-test host checks
 
-全部实验结束后，原服务 `/ready` 返回 200；既有 10 个容器的 ID、PID 和启动时间保持一致，4 处受保护挂载的设备号与 inode 保持一致。基准端口已关闭，没有遗留的本轮推理工作进程。原运行时和候选产物的摘要分别复核通过，主盘仍有约 **60.59 GiB** 可用空间。
+After all experiments, the original service's `/ready` returned 200. The IDs, PIDs, and start times of the existing 10 containers were unchanged, as were device numbers and inodes for 4 protected mounts. Benchmark ports were closed, and no inference workers from this round remained. Original-runtime and candidate-artifact hashes were verified separately, and the main disk still had about **60.59 GiB** free.
 
-对应本地证据为 `data/experiments/n150-remote-20261027/postflight-final.json`、`completion-check.json` 和 `candidate-final-hashes.txt`，均位于同一忽略目录内。
+Local evidence is `data/experiments/n150-remote-20261027/postflight-final.json`, `completion-check.json`, and `candidate-final-hashes.txt` in the same ignored directory.
 
-## 9. 2026-10-28 启用快速版本
+## 9. Fast version enabled on 2026-10-28
 
-用户选定最快且现有验证集准确率不变的版本后，将原实验补丁原样应用到
-`native/src/faceid.cc` 和 `denormal_guard.hpp`，并把线程状态测试纳入 CTest。
-`tools/export_native_model.py --flush-denormals` 生成显式开启 FTZ/DAZ 的 JSON
-及匹配校验文件；省略该参数仍保持关闭，兼容旧配置和 Mac ARM。源文件摘要与
-原候选一致，核心构建显式关闭 `fast-math`。
+After the user selected the fastest version with unchanged accuracy on the existing validation set, the original experimental patch was applied unchanged to `native/src/faceid.cc` and `denormal_guard.hpp`, with thread-state tests added to CTest. `tools/export_native_model.py --flush-denormals` generates JSON explicitly enabling FTZ/DAZ and matching checksums. Omitting the option retains the disabled default for compatibility with old configurations and Mac ARM. Source-file hashes matched the original candidate, and the core build explicitly disabled `fast-math`.
 
-本地集成验证为 **207 项 Python 测试、3 项 CTest、Go 普通及 native 构建测试通过**。
-Python 保留两条既有 Starlette/httpx/AnyIO 弃用警告；Mac 链接器另提示重复 rpath。
-Mac ARM 的 guard 测试验证不支持开启时的拒绝行为；目标机另外重新编译并运行
-真实 FTZ/DAZ 算术、完整 MXCSR 恢复、异常与 8 个持久线程测试，均通过。
+Local integration validation passed **207 Python tests, 3 CTest tests, ordinary Go tests, and native-build tests**. Python retained two existing Starlette/httpx/AnyIO deprecation warnings, and the Mac linker reported duplicate rpath. Mac ARM guard tests checked rejection of unsupported enablement. The target machine separately rebuilt and passed real FTZ/DAZ arithmetic, complete MXCSR restoration, exception handling, and 8-persistent-thread tests.
 
-目标机部署直接复用第 8 节已验证的 Linux 二进制，复制后逐项校验：
+Target deployment directly reused the Linux binaries verified in Section 8. Each copied artifact was checked.
 
-| 产物 | SHA-256 |
+| Artifact | SHA-256 |
 | --- | --- |
-| C++ 核心库 | `9bdc3f7728c4dc7aa79002c3bb2d4cf0e6cc22aef2ab54d87a5310159849e158` |
-| Go 服务 | `cfc2163b46a2143ac0a393e370ae86e7487415149867eec2a7ac78998babeafe` |
-| FTZ JSON（重命名后字节保留） | `cb9c53d87f733f182168f2c3ef1465fa05828f43f8382e3f38698e9baad07190` |
+| C++ core library | `9bdc3f7728c4dc7aa79002c3bb2d4cf0e6cc22aef2ab54d87a5310159849e158` |
+| Go service | `cfc2163b46a2143ac0a393e370ae86e7487415149867eec2a7ac78998babeafe` |
+| FTZ JSON, bytes preserved after renaming | `cb9c53d87f733f182168f2c3ef1465fa05828f43f8382e3f38698e9baad07190` |
 
-部署前确认当前生产的模型 ID、原始资产摘要、类别顺序和默认 `top_k=5` /
-`probability_threshold=0.95` 与候选相同。先以相同 systemd 安全配置在临时端口运行，
-验证完成后停止临时实例，再由原生服务接管原 `8000` 端口。密钥保持不变，systemd
-服务已设为开机启动，未通过实际重启主机来验证启动过程。
+Before deployment, production model ID, original-asset hashes, class order, and defaults `top_k=5` / `probability_threshold=0.95` were confirmed to match the candidate. A temporary instance first ran on a temporary port with the same systemd security configuration. After validation it stopped, and the native service took over the original `8000` port. Keys remained unchanged. The systemd service was enabled at boot, but startup was not checked through an actual host reboot.
 
-临时实例及正式实例分别完成 **12 张原图／14 张人脸** 的 HTTP 复测。二者检测框、
-检测分数、质量分数、候选顺序及接受判定均与冻结 Python 参考一致，概率最大绝对差
-均为 `2.384185791015625e-7`。实际 `/proc/<pid>/maps` 中的核心库路径、设备号和
-inode 均与部署文件匹配；鉴权拒绝及就绪接口检查通过。
+Temporary and production instances each completed HTTP retests on **12 originals / 14 faces**. Boxes, detection scores, quality scores, candidate order, and acceptance matched the frozen Python reference for both, with maximum absolute probability difference `2.384185791015625e-7`. Actual core-library paths, device numbers, and inodes in `/proc/<pid>/maps` matched deployment files. Authentication-rejection and readiness checks passed.
 
-正式实例这 12 个请求平均约 **655.36 ms**，结束时进程峰值 RSS 约 **806.81 MiB**。
-这是包含第一次请求的部署检查，不是第 8.5 节的三个新进程、预热加 48 次计时协议，
-不能用它替换正式基准或宣称进一步提速／省内存。本次也没有再次运行全部 1,051 张
-裁剪，而是复用与第 8.4 节完全相同的核心库、Go 文件、配置字节及模型权重。
+The production instance averaged about **655.36 ms** across these 12 requests, with peak process RSS about **806.81 MiB** at completion. This deployment check includes the first request and differs from Section 8.5's three-process protocol with warmup and 48 timed requests. It cannot replace the formal benchmark or establish further speed or memory gains. All 1,051 crops were not rerun at this stage. The exact core library, Go binary, configuration bytes, and weights from Section 8.4 were reused.
 
-现服务为 `seiyuu-faceid.service`，部署位于主盘的
-`/opt/seiyuu-faceid/releases/20261028-ftz/`。旧容器已停用并关闭自动重启，容器、
-环境变量和原模型挂载保留；其他 9 个容器的 ID、PID 与启动时间不变。主盘剩余约
-**60.11 GiB**。部署指南及回退命令见 [C++ / Go 文档](NATIVE_CPP_GO.md#linux-systemd-部署)。
+The service is `seiyuu-faceid.service`, deployed on the main disk at `/opt/seiyuu-faceid/releases/20261028-ftz/`. The old container was stopped and automatic restart disabled, while its container, environment variables, and original model mounts were retained. The other 9 containers kept their IDs, PIDs, and start times. Main-disk free space was about **60.11 GiB**. Deployment and rollback instructions are in the [C++ / Go documentation](NATIVE_CPP_GO.md).
 
-部署汇总保存在本机忽略目录 `data/experiments/n150-deploy-20261028/deployment.json`，
-远程事务记录及回退脚本仅留在目标机私有维护目录，密钥与私人响应不发布。压力、
-长期运行与更多业务图片的覆盖仍需单独验收。
+The deployment summary is saved in local ignored `data/experiments/n150-deploy-20261028/deployment.json`. Remote transaction records and rollback scripts remain only in a private maintenance directory on the target machine. Keys and private responses are not published. Stress, long-term operation, and broader business-image coverage still require separate acceptance checks.

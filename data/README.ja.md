@@ -1,11 +1,20 @@
-# Local data
+# ローカルデータ
 
-- `images/` at the repository root and `data/raw/`: original local photos; preserved.
-- `aligned/`: reviewed, aligned faces and metadata produced by sample preparation.
-- `training/`: the selected model's frozen 5,115 crops, trusted identity labels, source groups, train/validation/test indices and AdaFace + R50 features. Keep these for reproducibility.
-- `review/`: human face selections and content/label review records; character artwork and unlabeled photos remain distinct from real-person identity labels.
-- `gallery/`: original independent evaluation photos, retained as read-only source data. It is not a runtime model gallery.
-- `query/`: read-only batch classification inputs.
-- `runtime/detections.jsonl`: disposable face detection cache.
+[English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
-Private images, labels and generated model/data artifacts are excluded from Git. Superseded model experiments and generated reports have been removed. Evaluation of the selected model is `uv run python tools/evaluate.py`; `--reextract` verifies the deployed ONNX backbones as well.
+以下はデータ処理で使用するパスです。非公開ファイルは Git の管理対象外のため、クローン直後には存在しない場合があります。
+
+- `../images/` と `raw/` にローカルの元写真を置きます。
+- `aligned/` に確認済みの位置合わせ済み顔と前処理メタデータを保存します。
+- `training/` に過去の50クラスモデルの固定ラベル、ソースグループ、学習/検証/テスト分割インデックスと AdaFace + R50 特徴量を保存します。
+- `review/` に人手による顔の選択、内容とラベルの確認記録を保存します。キャラクター画像と未ラベル写真はそれぞれの確認状態を保持します。
+- `gallery/` に評価用の元写真を置きます。
+- `query/` に一括分類用の読み取り専用入力を置きます。
+- `runtime/detections.jsonl` は再生成可能な検出キャッシュです。
+- `experiments/` に独立した606クラスの学習成果物などのローカル実験を保存します。
+
+未分類写真はラベルなしで保持し、キャラクター画像は実人物の学習ラベルから除きます。
+
+過去のデータは5,115件の顔記録で、学習/検証/テストの分割は3,574/490/1,051件、最終分類ヘッドの学習は4,064件です。606クラス実験では別のデータと分類ヘッドを使用します。[モデル報告](../docs/MODEL_ACCURACY_20261103.ja.md)を参照してください。
+
+`uv run python tools/evaluate.py` は保存済み特徴量で過去の既定分類ヘッドを評価します。`--reextract` には元の位置合わせ済み顔画像も必要です。ローカルの整理で過去の写真と顔画像は削除されているため、再抽出前に必要なファイルを確認してください。新しいモデルの準備は[学習手順](../training/README.ja.md)を参照してください。

@@ -29,11 +29,15 @@ func run(model, addr string) error {
 	if err := os.Setenv("ORT_DISABLE_TELEMETRY", "1"); err != nil {
 		return err
 	}
+	limits, err := httpapi.LimitsFromEnv()
+	if err != nil {
+		return err
+	}
 	backend, err := core.Open(model)
 	if err != nil {
 		return err
 	}
-	api := httpapi.New(backend, os.Getenv("SEIYUU_FACEID_API_KEY"), httpapi.DefaultLimits())
+	api := httpapi.New(backend, os.Getenv("SEIYUU_FACEID_API_KEY"), limits)
 	defer api.Close()
 	server := &http.Server{Addr: addr, Handler: api, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 60 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

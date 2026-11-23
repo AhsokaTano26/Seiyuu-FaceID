@@ -4,6 +4,7 @@ import struct
 from dataclasses import dataclass
 from io import BytesIO
 
+import cv2
 import numpy as np
 from PIL import Image, ImageOps, UnidentifiedImageError
 from starlette.responses import JSONResponse
@@ -50,8 +51,9 @@ def decode_image(data: bytes, filename: str, limits: UploadLimits) -> DecodedIma
                 raise ApiError(415, "unsupported_image", "Use a non-animated JPEG, PNG or WebP.")
             if image.width * image.height > limits.max_image_pixels:
                 raise ApiError(413, "image_too_large", "The image exceeds the pixel limit.")
-            normalized = ImageOps.exif_transpose(image).convert("RGB")
-            pixels = np.ascontiguousarray(np.asarray(normalized)[:, :, ::-1])
+            ImageOps.exif_transpose(image, in_place=True)
+            rgb = image if image.mode == "RGB" else image.convert("RGB")
+            pixels = cv2.cvtColor(np.asarray(rgb), cv2.COLOR_RGB2BGR)
     except Image.DecompressionBombError as error:
         raise ApiError(413, "image_too_large", "The image exceeds the pixel limit.") from error
     except (UnidentifiedImageError, OSError, ValueError, SyntaxError, struct.error) as error:

@@ -23,6 +23,14 @@ def test_deployment_archive_has_pinned_model_fetcher_without_private_files(tmp_p
         assert "tools/fetch_models.py" in names
         assert "release/model-source.json" in names
         assert "SHA256SUMS" in names
+        for suffix in ("", ".zh-CN", ".ja"):
+            assert f"docs/API{suffix}.md" in names
+            readme = tar.extractfile(f"README{suffix}.md").read().decode()
+            assert f"](docs/API{suffix}.md)" in readme
+            assert "](README.zh-CN.md)" in readme
+            assert "](README.ja.md)" in readme
+            api = tar.extractfile(f"docs/API{suffix}.md").read().decode()
+            assert f"/blob/{REVISION}/docs/DEPLOY_LINUX{suffix}.md)" in api
         assert not any(
             n.endswith((".onnx", ".npz")) or n.startswith(("data/", "images/")) for n in names
         )
@@ -100,6 +108,12 @@ def test_native_bundle_preserves_libraries_and_offers_fast_and_compatible_config
     with tarfile.open(archive) as tar:
         names = tar.getnames()
         assert "runtime/bin/faceid-server" in names
+        for suffix in ("", ".zh-CN", ".ja"):
+            assert f"docs/API{suffix}.md" in names
+            readme = tar.extractfile(f"README{suffix}.md").read().decode()
+            assert f"](docs/API{suffix}.md)" in readme
+            assert "](README.zh-CN.md)" in readme
+            assert "](README.ja.md)" in readme
         assert tar.getmember("runtime/bin/faceid-server").mode == 0o755
         library = tar.getmember("runtime/lib/libonnxruntime.so.1")
         assert library.issym() and library.linkname == "libonnxruntime.so.1.29.0"
@@ -350,3 +364,76 @@ def test_real_github_adapter_completes_draft_upload_publish_cycle(release_assets
     assert state["created"] == 1 and state["release"]["draft"] is False
     publish_models(service, tag, REVISION, "notes", release_assets)
     assert state["created"] == 1
+
+
+@pytest.mark.parametrize(
+    "existing",
+    [
+        "success",
+        "in_progress",
+        "failure",
+        "other_model",
+        "none",
+        "pull_request",
+        "fork",
+        "feature",
+        "manual",
+        "release",
+    ],
+)
+def test_model_dispatch_reuses_successful_or_running_validation_and_retries_failures(
+    monkeypatch, existing
+):
+    from tools.publish_models import GitHubReleases
+
+    tag = "models-" + "a" * 16
+    requests = []
+
+    class Response(io.BytesIO):
+        status = 200
+
+    def urlopen(request, **kwargs):
+        requests.append(request)
+        if request.get_method() == "GET":
+            assert "/actions/workflows/ci.yml/runs?" in request.full_url
+            runs = (
+                []
+                if existing == "none"
+                else [
+                    {
+                        "event": {
+                            "pull_request": "pull_request",
+                            "manual": "workflow_dispatch",
+                            "release": "release",
+                        }.get(existing, "repository_dispatch"),
+                        "head_repository": {
+                            "full_name": "other/fork" if existing == "fork" else "owner/project"
+                        },
+                        "head_branch": (
+                            tag
+                            if existing == "release"
+                            else "feature"
+                            if existing == "feature"
+                            else "main"
+                        ),
+                        "display_title": "Model "
+                        + ("models-" + "b" * 16 if existing == "other_model" else tag),
+                        "status": "in_progress" if existing == "in_progress" else "completed",
+                        "conclusion": "failure" if existing == "failure" else "success",
+                    }
+                ]
+            )
+            return Response(json.dumps({"workflow_runs": runs}).encode())
+        assert request.full_url == "https://api.github.com/repos/owner/project/dispatches"
+        assert json.loads(request.data) == {
+            "event_type": "model-published",
+            "client_payload": {"tag": tag},
+        }
+        response = Response()
+        response.status = 204
+        return response
+
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+    dispatched = GitHubReleases("owner/project", "test-token").dispatch_model(tag)
+    assert dispatched is (existing not in ("success", "in_progress", "manual", "release"))
+    assert len(requests) == (2 if dispatched else 1)

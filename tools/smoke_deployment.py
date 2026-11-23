@@ -112,7 +112,7 @@ def smoke(root: Path, kind: str, log: Path) -> None:
                 + image.getvalue()
                 + f"\r\n--{boundary}--\r\n".encode()
             )
-            for route in ("/v1/detect", "/v1/recognize"):
+            for route in ("/v1/detect", "/v1/recognize", "/api/v1/detect"):
                 request = urllib.request.Request(
                     endpoint + route,
                     data=body,
@@ -125,6 +125,8 @@ def smoke(root: Path, kind: str, log: Path) -> None:
                     result = json.load(response)
                 if result["face_count"] != 0 or result["faces"] != []:
                     raise ValueError("Unexpected blank-image inference result.")
+                if route == "/api/v1/detect" and result["has_face"] is not False:
+                    raise ValueError("Blank image was reported as containing a face.")
             if process.poll() is not None:
                 raise RuntimeError("Service exited during the smoke requests.")
             print(f"{kind}: readiness, model identity, auth, detect and recognize passed.")

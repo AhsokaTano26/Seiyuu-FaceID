@@ -1,63 +1,43 @@
-# C++ 推理核心 + Go HTTP
+# C++ inference core + Go HTTP
 
-本版本用于验证 Intel N150 / 8 GB 上原生运行时的收益。一个 Go 进程通过 cgo
-直接调用 C++，SCRFD、AdaFace IR101、R50 加载一次；双骨干并行，HTTP 推理请求
-依次执行。模型保持 FP32，使用原有分类头和 0.95 默认阈值。
+[English](NATIVE_CPP_GO.md) | [简体中文](NATIVE_CPP_GO.zh-CN.md) | [日本語](NATIVE_CPP_GO.ja.md)
 
-算法原理、训练评估与各模块协作见 [识别技术框架详解](TECHNICAL_ARCHITECTURE.md)。
+This runtime evaluates the benefits of native execution on Intel N150 / 8 GB. One Go process calls C++ directly through cgo. SCRFD, AdaFace IR101, and R50 load once. The two backbones run in parallel, while HTTP inference requests run serially. Models remain FP32, retaining the existing classification head and default 0.95 threshold.
 
-已在 N150 完成 Linux 构建与启动、1,051 张裁剪和 12 张原图的一致性对照，
-以及完整三组 HTTP 基线。基线中同配置原生实现没有显示可靠提速，峰值 RSS 更高；
-省 CPU 线程预设相对旧线程组的平均 HTTP 耗时增加约 37.9%。完整口径与后续
-独立实验见 [N150 实机报告](N150_BENCHMARK.md)。2026-10-28 已在目标机使用
-FTZ/DAZ 版本接管原 API，长期和压力场景仍待验收。
+See the [recognition architecture guide](TECHNICAL_ARCHITECTURE.md) for algorithms, training, evaluation, and module interaction.
 
-后续独立 FTZ/DAZ 候选已完成全量回归与 HTTP 测量，平均请求耗时约 0.681 秒，
-历史留出 Top-1 保持 98.48%。该实现现已集成至 `native/`，构建后需在模型导出时
-显式加 `--flush-denormals` 开启。仅 Linux x86_64 且 CPU 支持 FTZ/DAZ 时可开启，
-Mac ARM 会明确拒绝；省略参数仍为默认关闭，兼容原有 JSON。结果、内存取舍及
-分阶段比较边界见 [FTZ 实验章节](N150_BENCHMARK.md#8-ftz--daz-独立跟进实验)。
+N150 validation completed Linux builds and startup, parity on 1,051 crops and 12 original images, and the full three-way HTTP baseline. With matching settings, the native baseline showed no reliable speedup and higher peak RSS. The CPU-saving thread profile increased mean HTTP time by about 37.9% relative to the original-thread group. See the [N150 report](N150_BENCHMARK.md) for full scope and later independent experiments. On 2026-10-28 the FTZ/DAZ version took over the target's existing API. Long-run and stress acceptance testing remain outstanding.
 
-这不是纯静态单文件程序。部署需要 `bin/faceid-server`、旁边的 `lib/` 共享库、
-模型目录及元信息。服务运行时不需要 Python；导出模型参数和对照验证使用 Python。
+A later independent FTZ/DAZ candidate completed full regression and HTTP measurements, with mean request time about 0.681 seconds and historical holdout Top-1 unchanged at 98.48%. Its implementation is now integrated into `native/`. Enable it explicitly with `--flush-denormals` during model export after building. It requires Linux x86_64 and CPU support for FTZ/DAZ. Mac ARM explicitly rejects enabling it. Omitting the flag keeps it off by default and preserves compatibility with existing JSON. See the [FTZ experiment](N150_BENCHMARK.md) for results, memory tradeoffs, and boundaries between experiment phases.
 
-## 构建
+Deployment uses `bin/faceid-server`, an adjacent `lib/` directory of shared libraries, a model directory, and metadata. This is not a fully static single-file program. Serving requires no Python. Model-parameter export and parity validation use Python.
 
-支持在 **Linux x86_64** 或 macOS arm64 本机编译；不把 Mac 构建的文件当成 Linux
-可执行文件。构建机需要 C++17 编译器、Make、CMake ≥ 3.20、Go ≥ 1.24、curl、tar
-和 SHA-256 工具。Linux 可安装 `build-essential cmake curl ca-certificates`，
-Go 使用满足版本要求的安装包。
+<a id="build"></a>
+
+## Build
+
+Native builds support **Linux x86_64** and macOS arm64. Mac build artifacts cannot be used as Linux executables. Build machines need a C++17 compiler, Make, CMake ≥ 3.20, Go ≥ 1.24, curl, tar, and a SHA-256 utility. Linux can install `build-essential cmake curl ca-certificates` and a Go distribution meeting the version requirement.
 
 ```bash
 bash native/build.sh
 ```
 
-脚本固定下载 ONNX Runtime 1.29.0、OpenCV 5.0.0 和 nlohmann/json 3.12.0，检查
-下载文件 SHA-256，构建所需 OpenCV 模块和 C++ 核心，运行 CTest 与 Go 单元测试，
-再生成 `dist/native-runtime/`。默认 4 个构建任务；内存紧张时使用 `JOBS=2`。
-OpenCV 可能继续下载平台优化依赖；构建需要网络。依赖和构建产物均在忽略目录内。
-依赖已构建且仅修改应用代码时，可用 `bash native/build.sh --app-only` 跳过 OpenCV
-的配置和编译；改变依赖版本或构建选项后应运行完整构建。
+The script pins ONNX Runtime 1.29.0, OpenCV 5.0.0, and nlohmann/json 3.12.0, verifies download SHA-256 values, builds the required OpenCV modules and C++ core, runs CTest and Go unit tests, and generates `dist/native-runtime/`. It defaults to 4 build jobs. Use `JOBS=2` when memory is tight. OpenCV may download additional platform-optimized dependencies, so builds require networking. Dependencies and build outputs stay in ignored directories. After dependencies are built, application-only changes can use `bash native/build.sh --app-only` to skip OpenCV configuration and compilation. Run a full build after changing dependency versions or build options.
 
 ```bash
 uv run python tools/export_native_model.py --config configs/n150.yaml
 ```
 
-N150 推荐使用已验证的快速配置（输出文件存在时不会覆盖）：
+The validated fast profile is recommended for N150. Existing output files are not overwritten.
 
 ```bash
 uv run python tools/export_native_model.py --config configs/n150.yaml \
   --flush-denormals --output models/selected/native-n150.json
 ```
 
-后续启动的 `-model` 指向对应 JSON。该开关同时配置 ORT 会话线程和每次 C++ 调用的
-FTZ/DAZ 模式；调用结束或异常时恢复线程浮点状态，适应 Go 的线程调度。模型权重、
-分类头和 0.95 阈值保留；它改变次正规数语义，不是 FP16 或 INT8。已有 1,051 张
-裁剪的准确率及判定保持一致，不能据此保证所有未知输入逐位相同。
+Point the later server's `-model` argument to the corresponding JSON. This flag configures both ORT session threads and FTZ/DAZ mode around every C++ call. Thread floating-point state is restored on completion or exception to accommodate Go thread scheduling. Weights, the classification head, and the 0.95 threshold remain unchanged. It changes subnormal semantics without converting to FP16 or INT8. Accuracy and decisions matched on 1,051 crops, which does not guarantee bitwise equality for all unknown inputs.
 
-准备步骤验证原始模型及分类器校验值，把已有 NPZ 参数无损转为
-`models/selected/native-model.json`，并生成 `.sha256` 校验文件。ONNX 权重不变。
-JSON 中模型路径相对于自身位置；部署时保留以下布局：
+Preparation verifies the original model and classifier checksums, converts existing NPZ parameters losslessly into `models/selected/native-model.json`, and generates a `.sha256` sidecar. ONNX weights remain unchanged. Model paths in JSON are relative to its location. Keep this deployment layout.
 
 ```text
 models/
@@ -70,11 +50,11 @@ models/
     native-model.json.sha256
 ```
 
-`classifier.npz` 用于核对原分类器来源；运行时不会用 Python 读取它。启动时 Go
-同时验证 JSON 校验文件、原始模型哈希与模型标识。校验不通过直接退出。校验文件
-用于发现损坏，不代表模型包经过数字签名认证。改变配置后需重新导出 JSON。
+`classifier.npz` verifies the original classifier source and is not read through Python at runtime. At startup, Go verifies the JSON sidecar, original model hashes, and model identifier, exiting immediately on failure. Checksums detect corruption but do not represent digital-signature authentication of the model package. Re-export JSON after configuration changes.
 
-## 启动与接口
+<a id="startup-and-api"></a>
+
+## Startup and API
 
 ```bash
 export SEIYUU_FACEID_API_KEY='replace-with-your-key'
@@ -83,23 +63,13 @@ dist/native-runtime/bin/faceid-server \
   -addr 127.0.0.1:8000
 ```
 
-API 密钥环境变量沿用当前服务；不设置时不要求鉴权。默认监听本机。接口和上传
-字段见 [API 文档](API.md)：`/health`、`/ready`、`/v1/model`、`/v1/detect`、
-`/v1/recognize`、`/v1/recognize/batch`。此试验版没有首页 UI、Swagger、ReDoc
-或 OpenAPI 路由。识别结果字段沿用现有 API；错误详情文本可能不同。
+The API key uses the existing service's environment variable. If unset, authentication is not required. The default listen address is local. See the [API documentation](API.md) for endpoints and upload fields. Routes are `/health`, `/ready`, `/v1/model`, `/v1/detect`, `/v1/recognize`, and `/v1/recognize/batch`. This prototype has no home-page UI, Swagger, ReDoc, or OpenAPI routes. Recognition fields follow the existing API, though error-detail wording can differ.
 
-单文件 10 MiB、请求 81 MiB、单图 2000 万像素、每批 8 张。支持静态 JPEG、PNG、
-WebP，应用 EXIF 方向。最多允许 8 个处于上传解析、等待或处理阶段的推理请求，超出返回
-`503 server_busy`；排队取消返回 `408 request_cancelled`。开始运行的原生推理会完成后释放
-资源。关闭服务时等待当前调用结束后销毁模型。试验版拒绝所有 APNG，包括单帧 APNG。
+Limits are 10 MiB per file, 81 MiB per request, 20 million pixels per image, and 8 images per batch. Static JPEG, PNG, and WebP are supported with EXIF orientation applied. Up to 8 inference requests may be parsing uploads, waiting, or processing. Excess requests return `503 server_busy`, and queue cancellation returns `408 request_cancelled`. Started native inference finishes before releasing resources. Shutdown destroys the model only after the current call finishes. All APNG are rejected, including single-frame APNG.
 
-multipart 文件超过 32 KiB 内存阈值后会进入临时目录，请求结束清理，部署仍需预留
-临时磁盘空间。`processing_ms` 包含文件读取、校验、解码和推理，不含 multipart
-上传解析及排队；评估完整请求应另测客户端 HTTP 时间。HTTP 优雅关闭等待窗口为
-90 秒，但原生调用完成前仍不能销毁模型，因此不保证整个进程严格在 90 秒内退出。
+Multipart file content exceeding the 32 KiB memory threshold spills to a temporary directory and is removed when the request ends, so deployment still needs temporary disk capacity. `processing_ms` includes file reading, validation, decoding, and inference, excluding multipart upload parsing and queueing. Measure client HTTP time separately for full requests. HTTP graceful shutdown waits for 90 seconds, but models cannot be destroyed until native calls finish, so the whole process is not guaranteed to exit within exactly 90 seconds.
 
-`model_id` 与原模型相同，`recognition_id` 按原生实现及完整配置生成，用于区分
-实现与设置。阈值、候选数量支持按请求覆盖。
+`model_id` matches the original model. `recognition_id` incorporates the native implementation and full configuration to distinguish implementations and settings. Threshold and candidate count can be overridden per request.
 
 ```bash
 curl --fail http://127.0.0.1:8000/ready
@@ -107,24 +77,23 @@ curl --fail-with-body http://127.0.0.1:8000/v1/recognize \
   -H "Authorization: Bearer $SEIYUU_FACEID_API_KEY" -F 'file=@photo.jpg'
 ```
 
-在目标机测 HTTP 延迟无需 Python，构建产物含 `faceid-bench`：
+HTTP latency measurement on the target does not require Python. Build outputs include `faceid-bench`.
 
 ```bash
 dist/native-runtime/bin/faceid-bench -url http://127.0.0.1:8000 \
   -image ./photo.jpg -warmups 3 -runs 20
 ```
 
-它读取同一 API 密钥环境变量，输出平均 / P50 / P95 HTTP 耗时和平均服务端处理耗时；
-不输出身份、文件路径或响应内容，也不把延迟当作 CPU 或内存指标。比较 Python
-服务与原生服务时分别启动，使用相同图片和参数，避免两个模型实例争抢 CPU。
+It reads the same API-key environment variable and reports mean / P50 / P95 HTTP latency and mean server processing time. It does not print identities, file paths, or response contents. Latency is separate from CPU and memory metrics. Start Python and native services separately for comparison, using identical images and parameters so two model instances do not compete for CPU.
 
-## 对照验证
+<a id="parity-validation"></a>
 
-模型未改变不等于输出必然相同。需检查解码、检测、五点对齐、归一化、线性头、
-候选顺序及接受阈值。尤其 JPEG 解码和不同平台的数值实现都可能产生差异。
+## Parity validation
+
+Unchanged models do not guarantee identical outputs. Check decoding, detection, five-point alignment, normalization, the linear head, candidate order, and acceptance thresholds. JPEG decoders and platform-specific numerical implementations can produce differences.
 
 ```bash
-# Linux 使用 .so；macOS 使用 .dylib。
+# Use .so on Linux and .dylib on macOS.
 uv run --extra api python tools/validate_native.py \
   --library dist/native-runtime/lib/libfaceid_core.so \
   --model models/selected/native-model.json --config configs/n150.yaml \
@@ -132,80 +101,58 @@ uv run --extra api python tools/validate_native.py \
   --image-dir /path/to/original-images --encoded --output /tmp/native-parity.json
 ```
 
-验证工具只读取显式提供的目录，不默认扫描训练照片。报告汇总概率差与决策一致性，
-不保存照片、身份列表或特征。它同时加载 Python 和 C++，因此它的进程内存不代表
-原生服务内存。资源比较应分别启动独立 Python 与 Go 服务，用相同输入、线程配置、
-预热和请求顺序，比较延迟和进程 RSS。历史留出集曾用于模型选择，不是新的独立泛化
-保证。N150 已完成 Linux 构建、实际启动、全量裁剪及固定原图一致性验证，以及
-三组 HTTP 基线；该机结果单列于 [实机报告](N150_BENCHMARK.md)，下文 Mac
-记录仍保留其原平台与输入范围，不代替 N150 数据。
+The tool reads only explicitly supplied directories and does not scan training photos by default. Its report summarizes probability differences and decision parity without saving photos, identity lists, or features. It loads Python and C++ together, so its process memory does not represent native-service memory. Resource comparisons should start independent Python and Go services with identical inputs, threads, warmup, and request order, measuring latency and process RSS. The historical holdout was used in model selection and does not provide a new independent generalization guarantee. N150 has completed Linux builds, real startup, parity on all crops and fixed originals, and three HTTP baselines. Its results are listed separately in the [target-machine report](N150_BENCHMARK.md). The Mac records below retain their original platform and input scope.
 
-并列检测分数还有一个明确边界：C++ NMS 按倒序输入索引处理相同分数，Python 使用
-NumPy 默认的不稳定排序。若重叠框恰好同分，可能选择不同关键点；不能据抽样回归
-声称任意图片都逐位等价。是否作为默认运行时，仍应以目标机器和实际业务图片验收。
+Tied detection scores have a specific boundary. C++ NMS processes ties in reverse input-index order, while Python uses NumPy's default unstable sort. Overlapping boxes with exactly tied scores may select different landmarks. Sampled regression cannot establish bitwise equivalence for arbitrary images. Selecting a default runtime still requires acceptance testing on target hardware and actual business images.
 
-## 本地回归记录
+<a id="local-regression"></a>
 
-macOS ARM64，Python 与 C++ 在独立进程加载各自的 ONNX Runtime 1.29.0，避免
-同一进程内动态库复用影响验证。对全部 1,051 张历史留出裁剪重新提取特征：
+## Local regression record
 
-- Top-1、Top-5 顺序和 0.95 接受判定全部一致；无新增误判。
-- 准确率均为 1,035 / 1,051 = **98.48%**。
-- 特征最大绝对差 `2.24e-8`，分类概率最大绝对差 `3.58e-7`；不是逐位相同。
-- 另测 12 张原图 / 14 张人脸：原始 BGR 和直接解码上传文件两条路径均通过；
-  检测框、检测分数、质量分数一致，候选顺序和接受判定一致，概率最大差 `2.09e-7`。
+On macOS ARM64, Python and C++ loaded their own ONNX Runtime 1.29.0 in separate processes to prevent dynamic-library reuse within one process from affecting validation. All 1,051 historical holdout crops had their features re-extracted.
 
-本地私有明细保存在忽略目录 `data/experiments/native-cpp-go-20261027/`，不随模型
-Release 发布。Python 全套 206 项测试、C++ CTest、Go 单元与 race 测试、实际模型
-HTTP 集成测试通过。Mac 构建目录复制到其他目录后完成动态加载检查。这些是 Mac
-阶段记录；后续 Linux 构建、N150 全量一致性及 HTTP 基线检查见 [实机报告](N150_BENCHMARK.md)，
-其中单独列出目标机实际执行的测试范围，不把 206 项或 race 测试自动算入该范围。
+- Top-1, ordered Top-5, and 0.95 acceptance decisions all matched, with no added misclassifications.
+- Both achieved 1,035 / 1,051 = **98.48%** accuracy.
+- Maximum absolute feature difference was `2.24e-8`, and probability difference was `3.58e-7`. Results were not bitwise identical.
+- A separate test of 12 originals / 14 faces passed on both raw BGR and direct uploaded-file decoding paths. Boxes, detection scores, quality scores, candidate order, and acceptance decisions matched. Maximum probability difference was `2.09e-7`.
 
-## 本地 HTTP 资源对照
+Private local details remain in ignored `data/experiments/native-cpp-go-20261027/` and are excluded from model Releases. The full Python suite of 206 tests, C++ CTest, Go unit and race tests, and real-model HTTP integration tests passed. Dynamic loading was checked after copying the Mac build directory elsewhere. These are Mac-phase records. See the [target-machine report](N150_BENCHMARK.md) for later Linux builds, N150 full parity, and HTTP baseline checks. That report lists the tests actually run on the target and does not automatically include the 206 tests or race tests.
 
-同一台 Mac，分别启动独立 Python / Go 服务，均采用 N150 配置；另选 12 张原图，
-每个服务预热一轮、计时四轮，共 48 个请求。各做三次新进程测试并交替运行顺序，
-下表取三次进程结果的中位数。没有同时驻留两个服务实例。
+<a id="local-http-resources"></a>
 
-| 指标 | Python HTTP | C++ + Go HTTP | 变化 |
+## Local HTTP resource comparison
+
+On the same Mac, independent Python / Go services used the N150 profile. Another 12 originals were selected. Each service warmed up for one round and timed four rounds, totaling 48 requests. Each implementation ran in three fresh processes with alternating execution order. The table shows medians of the three process results. Both service instances were never resident simultaneously.
+
+| Metric | Python HTTP | C++ + Go HTTP | Change |
 | --- | ---: | ---: | ---: |
-| 平均 HTTP 耗时 | 94.13 ms | 85.00 ms | 减少 9.7% |
-| HTTP P95 | 113.83 ms | 103.15 ms | 减少 9.4% |
-| 平均服务端处理耗时 | 92.14 ms | 82.69 ms | 减少 10.3% |
-| 进程峰值 RSS | 1160.89 MiB | 1026.94 MiB | 减少 133.95 MiB / 11.5% |
+| Mean HTTP latency | 94.13 ms | 85.00 ms | 9.7% lower |
+| HTTP P95 | 113.83 ms | 103.15 ms | 9.4% lower |
+| Mean server processing time | 92.14 ms | 82.69 ms | 10.3% lower |
+| Process peak RSS | 1160.89 MiB | 1026.94 MiB | 133.95 MiB / 11.5% lower |
 
-三轮 HTTP 输出的检测、质量判定、候选顺序及接受结果均一致，概率最大差 `2.38e-7`。
-HTTP 时间包含本机上传和响应，P95 使用 nearest-rank，服务端处理时间包含解码与推理；峰值 RSS 来自每个
-服务进程结束后的 `wait4`，包括启动、模型加载和大图解码，不能与只测裁剪分类的
-旧基准混用。这里测的是完整运行时迁移的收益，包含解码和数据处理路径变化，不能
-全部归因为语言本身。它不是 N150 的耗时、内存或功耗预测。
+Detection, quality decisions, candidate order, and acceptance matched for all three HTTP output rounds, with a maximum probability difference of `2.38e-7`. HTTP time includes local upload and response. P95 uses nearest-rank, and server processing time includes decoding and inference. Peak RSS comes from `wait4` after each service process exits and includes startup, model loading, and large-image decoding. It cannot be mixed with old benchmarks measuring only crop classification. These are gains from the complete runtime migration, including changes to decoding and data processing, and cannot all be attributed to language choice. They do not predict N150 latency, memory, or power consumption.
 
-构建产物和部署材料留在仓库工作流，不作为 GitHub 模型 Release 附件发布。
+Build outputs and deployment materials remain in repository workflows and are excluded from GitHub model Release attachments.
 
-## 公开标准数据集复测
+<a id="standard-dataset-retest"></a>
 
-2026-10-28 在本机 M4 Pro / 24 GiB 上，对 LFW 512 张和 WIDER FACE validation
-244 张固定抽样完成三轮对照，共 9,072 个计时 HTTP 请求。完整识别的 C++/Go 平均
-耗时分别为 58.82 / 75.33 ms，较 Python 减少 1.83% / 2.67%；仅检测减少约
-7.9% / 14.7%，峰值 RSS 中位数减少 3.8%。全部输出一致性检查通过。
+## Retesting on public standard datasets
 
-这组 Mac 测试关闭 FTZ/DAZ，不替代 N150 的数据，也不是 LFW 验证准确率或 WIDER
-检测 AP。输入、工作量、统计方法和原始依据见 [标准数据集测试报告](STANDARD_DATASET_BENCHMARK.md)。
+On 2026-10-28, three comparison rounds ran locally on M4 Pro / 24 GiB with fixed samples of 512 LFW images and 244 WIDER FACE validation images, totaling 9,072 timed HTTP requests. Mean full-recognition C++/Go latencies were 58.82 / 75.33 ms, respectively, 1.83% / 2.67% lower than Python. Detection-only latency fell about 7.9% / 14.7%, and median peak RSS fell 3.8%. All output-parity checks passed.
 
-随后完成[全量准确率评测](STANDARD_DATASET_ACCURACY.md)：LFW 6,000 对十折融合
-验证准确率 99.13%，WIDER 完整验证集的 Easy / Medium / Hard AP（×100）为
-85.49 / 79.48 / 48.84，原声优留出集仍为 98.48%。Python 与 C++ 评测指标和配对判定一致。
+These Mac tests disabled FTZ/DAZ and retain a scope separate from N150. They do not report LFW verification accuracy or WIDER detection AP. See the [standard-dataset benchmark](STANDARD_DATASET_BENCHMARK.md) for inputs, workloads, statistics, and original evidence.
 
-## Linux systemd 部署
+A later [full accuracy evaluation](STANDARD_DATASET_ACCURACY.md) found 99.13% fused ten-fold verification accuracy on 6,000 LFW pairs. WIDER full validation Easy / Medium / Hard AP (×100) was 85.49 / 79.48 / 48.84. The original voice-actor holdout remained at 98.48%. Python and C++ evaluation metrics and pair decisions matched.
 
-服务模板为 [`native/deploy/seiyuu-faceid.service`](../native/deploy/seiyuu-faceid.service)。
-使用 `DynamicUser`、只读文件系统和独立临时目录，运行时无需 Python 或 Docker。
-模板沿用 `0.0.0.0:8000`；可按需要改为本机地址。API 密钥由 root 权限的
-`/etc/seiyuu-faceid/api.env` 提供，内容为 `SEIYUU_FACEID_API_KEY=已有密钥`，权限设为
-`0600`，不要提交仓库。部署前确认该端口没有其他服务占用。
+<a id="linux-systemd-部署"></a>
+<a id="linux-systemd"></a>
 
-目录布局如下。模型与运行时放主盘，所有目录可由服务用户读取／遍历，程序可执行，
-其余文件只读；服务用户不应有写入程序或模型的权限。
+## Linux systemd deployment
+
+The service template is [`native/deploy/seiyuu-faceid.service`](../native/deploy/seiyuu-faceid.service). It uses `DynamicUser`, a read-only file system, and a private temporary directory. Serving needs neither Python nor Docker. The template uses `0.0.0.0:8000`, which can be changed to a local address. A root-owned `/etc/seiyuu-faceid/api.env` supplies the API key as `SEIYUU_FACEID_API_KEY=existing-key`. Set permissions to `0600` and exclude it from the repository. Confirm that the port is free before deployment.
+
+Use the layout below. Place models and runtime on the main disk. The service user must be able to read/traverse every directory and execute programs. Other files are read-only. The service user should not be able to write to programs or models.
 
 ```text
 /opt/seiyuu-faceid/
@@ -220,9 +167,7 @@ HTTP 时间包含本机上传和响应，P95 使用 nearest-rank，服务端处�
     models/selected/native-model.json.sha256
 ```
 
-这里的 `native-model.json` 取自带 `--flush-denormals` 导出的快速配置，重命名后重新
-生成对应文件名的 SHA-256 sidecar，保留 JSON 字节和所有相对模型路径。准备好布局、
-密钥文件及 `current` 链接后：
+Here `native-model.json` comes from the fast profile exported with `--flush-denormals`. After renaming it, regenerate the SHA-256 sidecar for the new filename while preserving JSON bytes and all relative model paths. Once the layout, key file, and `current` symlink are ready, run the following.
 
 ```bash
 sudo install -m 0644 native/deploy/seiyuu-faceid.service /etc/systemd/system/
@@ -233,19 +178,15 @@ curl --fail http://127.0.0.1:8000/ready
 sudo systemctl status seiyuu-faceid.service
 ```
 
-本次 N150 切换复用此前全量验证通过的核心库、Go 可执行文件及配置字节，未把 Mac
-产物传给 Linux。先在临时端口验证，再停旧容器、关闭其自动重启、启用原端口的新
-服务。API 密钥保留，其他容器及旧模型挂载保持原样，旧容器保留用于回退。上线后
-再次验证 12 张原图／14 张人脸输出；结果见 [部署验收记录](N150_BENCHMARK.md#9-2026-10-28-启用快速版本)。
+The N150 switch reused the core library, Go executable, and configuration bytes already validated in full. Mac artifacts were not transferred to Linux. Validation first ran on a temporary port, followed by stopping the old container, disabling its automatic restart, and enabling the new service on the original port. The API key, other containers, and old model mounts were preserved, with the old container retained for rollback. After deployment, outputs were checked again on 12 originals / 14 faces. See the [deployment acceptance record](N150_BENCHMARK.md).
 
-该原生服务仅提供前述 API 路由，`/docs`、`/redoc` 和上传首页不在其中；接口字段
-查阅仓库 [API 文档](API.md)。如果旧部署提供 Swagger，此处不会自动保留该页面。
+The native service exposes the API routes above. `/docs`, `/redoc`, and the upload home page are absent. Consult the repository [API documentation](API.md) for fields. A Swagger page in the previous deployment is not automatically retained.
 
-若由 Docker 切换到此服务，先停用 systemd 服务再恢复旧容器，避免端口冲突：
+When rolling back from this service to the previous Docker deployment, disable the systemd service before restoring the old container to avoid a port conflict.
 
 ```bash
 sudo systemctl disable --now seiyuu-faceid.service
-docker update --restart=unless-stopped <原容器名>
-docker start <原容器名>
+docker update --restart=unless-stopped <original-container-name>
+docker start <original-container-name>
 curl --fail http://127.0.0.1:8000/ready
 ```

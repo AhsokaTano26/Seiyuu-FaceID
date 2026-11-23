@@ -1,12 +1,13 @@
-# 模型发布输入
+# Model release inputs
 
-model-source.json 固定可下载的模型专用归档及每个允许成员的 SHA-256、大小。
-training.json 是从当前模型实际使用的本地冻结训练/验证划分核实后导出的公开汇总，
-与 classifier.npz 的 SHA-256 和内置姓名顺序绑定。没有照片、样本级标签或原始特征。
+[English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
-CI 使用这些输入生成仅含模型及必要元信息的 Release；
-应用部署归档交付至 Actions Artifacts，镜像交付至 Docker Hub。
-模型来源当前固定为既有 v0.1.0 模型附件，整个归档和成员摘要均已核对，
-不使用其中另一个历史部署附件。
+`model-source.json` pins a downloadable model-only archive, its SHA-256, and the digest and size of each allowed member. `training.json` is a public aggregate exported after verifying the frozen training/validation rows actually used to fit that head. It is bound to the classifier SHA-256 and built-in label order.
 
-更新流程与下载入口见 [CI/CD 文档](../docs/CI_CD.md)。这些是公开元信息，不是密钥配置。
+CI generates model-only Releases from these inputs. Application deployment archives go to Actions Artifacts and container images to Docker Hub. The source currently pins the historical v0.1.0 model archive, and both archive and member digests have been verified.
+
+Publishing a content-addressed `models-<content-digest>` Release triggers deployment CI for those weights and the current main application. Human publication uses `release.published`; CI publication explicitly sends `repository_dispatch` with `tools/publish_models.py --dispatch`. Each resulting deployment bundle pins that Release and its model digest. Model-triggered builds finish after deployment delivery, preventing recursive model publication. Existing versions can be built again through the workflow's `model_tag` input.
+
+The public metadata contains aggregate identity counts and provenance. Test rows are excluded from training counts. Photos, sample-level labels, raw features, evaluation data and API keys are excluded from model Releases.
+
+See the [CI/CD guide](../docs/CI_CD.md) for downloads and updates, and [project conventions](../AGENTS.md) for the complete Release rules.
