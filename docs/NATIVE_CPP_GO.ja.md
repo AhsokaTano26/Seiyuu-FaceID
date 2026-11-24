@@ -16,13 +16,15 @@ N150 では Linux ビルドと起動、1,051 枚の切り抜きと 12 枚の元�
 
 ## ビルド
 
-**Linux x86_64** または macOS arm64 の実機でビルドできます。Mac の成果物を Linux 実行ファイルとしては扱えません。C++17 コンパイラー、Make、CMake ≥ 3.20、Go ≥ 1.24、curl、tar、SHA-256 ツールが必要です。Linux では `build-essential cmake curl ca-certificates` と、版条件を満たす Go を導入できます。
+**Linux x86_64** または macOS arm64 の実機でビルドできます。Mac の成果物を Linux 実行ファイルとしては扱えません。C++17 コンパイラー、Make、CMake ≥ 3.20、Go ≥ 1.24、SDK 準備用の Python ≥ 3.10、curl、tar、SHA-256 ツールが必要です。Linux では `build-essential cmake curl ca-certificates python3` と、版条件を満たす Go を導入できます。
 
 ```bash
 bash native/build.sh
 ```
 
-スクリプトは ONNX Runtime 1.29.0、OpenCV 5.0.0、nlohmann/json 3.12.0 を固定して取得し、SHA-256 を検証します。必要な OpenCV モジュールと C++ コアをビルドし、CTest と Go 単体テストを実行して `dist/native-runtime/` を生成します。既定は 4 並列で、メモリが少ない場合は `JOBS=2` を使います。OpenCV が追加のプラットフォーム最適化依存を取得する場合もあり、ネットワークが必要です。依存と成果物は無視対象ディレクトリ内に置きます。依存の構築後にアプリコードだけを変更した場合は `bash native/build.sh --app-only` で OpenCV の構成とコンパイルを省けます。依存版やビルドオプションを変えた場合は完全ビルドを実行します。
+スクリプトは ONNX Runtime 1.29.0、OpenCV 5.0.0、nlohmann/json 3.12.0 を固定します。ONNX Runtime は Microsoft の[公式 NuGet パッケージ](https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime/1.29.0)から取得し、NuGet catalog で公開された固定 SHA-512 を検証します。Python 標準ライブラリーのツールが対象プラットフォームのネイティブライブラリー、C/C++ ヘッダー、ライセンスとプライバシー通知を抽出し、SDK パッケージを `dist/native-deps/downloads/` にキャッシュします。.NET と NuGet CLI は不要です。他の取得物は引き続き SHA-256 を検証し、準備済み SDK ディレクトリは再利用します。
+
+必要な OpenCV モジュールと C++ コアをビルドし、CTest と Go 単体テストを実行して `dist/native-runtime/` を生成します。既定は 4 並列で、メモリが少ない場合は `JOBS=2` を使います。OpenCV が追加のプラットフォーム最適化依存を取得する場合もあり、ネットワークが必要です。依存と成果物は無視対象ディレクトリ内に置きます。依存の構築後にアプリコードだけを変更した場合は `bash native/build.sh --app-only` で OpenCV の構成とコンパイルを省けます。依存版やビルドオプションを変えた場合は完全ビルドを実行します。
 
 ```bash
 uv run python tools/export_native_model.py --config configs/n150.yaml

@@ -21,14 +21,12 @@ fi
 case "$(uname -s)-$(uname -m)" in
     Darwin-arm64)
         ORT_PLATFORM=osx-arm64
-        ORT_SHA=d0706fc34f315d8c88639d0a8c81f2e09e815f282cabed3493c06a054352cf92
         LIB_RPATH='@loader_path'
         BIN_RPATH='@executable_path/../lib'
         LAPACK=ON
         ;;
     Linux-x86_64)
         ORT_PLATFORM=linux-x64
-        ORT_SHA=c3fddc4f139a045b0c4902c57410f0694f1c2fdf9b6939fbe38b1aeae7cd14ba
         LIB_RPATH='$ORIGIN'
         BIN_RPATH='$ORIGIN/../lib'
         LAPACK=OFF
@@ -52,8 +50,10 @@ fetch() {
     [[ "$(sha256 "$path")" == "$expected" ]] || { echo "Checksum mismatch: $path" >&2; exit 1; }
 }
 ORT="onnxruntime-$ORT_PLATFORM-1.29.0"
-fetch "https://github.com/microsoft/onnxruntime/releases/download/v1.29.0/$ORT.tgz" "$DEPS/downloads/$ORT.tgz" "$ORT_SHA"
-if [[ ! -d "$DEPS/$ORT" ]]; then tar -xzf "$DEPS/downloads/$ORT.tgz" -C "$DEPS"; fi
+if [[ ! -d "$DEPS/$ORT" ]]; then
+    python3 "$ROOT/tools/fetch_onnxruntime.py" --platform "$ORT_PLATFORM" \
+        --destination "$DEPS/$ORT" --cache "$DEPS/downloads"
+fi
 fetch 'https://raw.githubusercontent.com/nlohmann/json/v3.12.0/single_include/nlohmann/json.hpp' "$DEPS/json/nlohmann/json.hpp" aaf127c04cb31c406e5b04a63f1ae89369fccde6d8fa7cdda1ed4f32dfc5de63
 fetch 'https://raw.githubusercontent.com/nlohmann/json/v3.12.0/LICENSE.MIT' "$DEPS/json/LICENSE" 46a65cffd1ea955132d95a8dd921640714a8d6b537d2e4e482d31145ae95b603
 OPENCV_SHA=b0528f5a1d379d59d4701cb28c36e22214cc51cf64594e5b56f2d3e6c0233095

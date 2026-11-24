@@ -203,7 +203,7 @@ jobs:
           path: |
             dist/native-deps/downloads
             dist/native-deps/opencv
-          key: native-ubuntu22-amd64-v1-${{ hashFiles('native/build.sh') }}
+          key: native-ubuntu22-amd64-v1-${{ hashFiles('native/build.sh', 'tools/fetch_onnxruntime.py') }}
       - name: Build and run CTest and Go suites
         env:
           DEPS_CACHED: ${{ steps.native-deps.outputs.cache-hit }}

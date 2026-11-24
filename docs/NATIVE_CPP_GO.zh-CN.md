@@ -28,16 +28,19 @@ Mac ARM 会明确拒绝。省略参数仍为默认关闭，兼容原有 JSON。�
 ## 构建
 
 支持在 **Linux x86_64** 或 macOS arm64 本机编译。不把 Mac 构建的文件当成 Linux
-可执行文件。构建机需要 C++17 编译器、Make、CMake ≥ 3.20、Go ≥ 1.24、curl、tar
-和 SHA-256 工具。Linux 可安装 `build-essential cmake curl ca-certificates`，
+可执行文件。构建机需要 C++17 编译器、Make、CMake ≥ 3.20、Go ≥ 1.24、用于准备 SDK 的 Python ≥ 3.10、curl、tar
+和 SHA-256 工具。Linux 可安装 `build-essential cmake curl ca-certificates python3`，
 Go 使用满足版本要求的安装包。
 
 ```bash
 bash native/build.sh
 ```
 
-脚本固定下载 ONNX Runtime 1.29.0、OpenCV 5.0.0 和 nlohmann/json 3.12.0，检查
-下载文件 SHA-256，构建所需 OpenCV 模块和 C++ 核心，运行 CTest 与 Go 单元测试，
+脚本固定使用 ONNX Runtime 1.29.0、OpenCV 5.0.0 和 nlohmann/json 3.12.0。
+ONNX Runtime 从微软[官方 NuGet 包](https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime/1.29.0)获取，核对 NuGet catalog 发布的固定 SHA-512。
+Python 标准库工具只提取对应平台的原生库、C/C++ 头文件和许可证、隐私说明，SDK 包缓存在 `dist/native-deps/downloads/`，无需 .NET 或 NuGet CLI。其他下载继续核对 SHA-256，已有准备好的 SDK 目录会复用。
+
+脚本构建所需 OpenCV 模块和 C++ 核心，运行 CTest 与 Go 单元测试，
 再生成 `dist/native-runtime/`。默认 4 个构建任务。内存紧张时使用 `JOBS=2`。
 OpenCV 可能继续下载平台优化依赖。构建需要网络。依赖和构建产物均在忽略目录内。
 依赖已构建且仅修改应用代码时，可用 `bash native/build.sh --app-only` 跳过 OpenCV

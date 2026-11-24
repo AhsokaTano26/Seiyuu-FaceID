@@ -16,13 +16,15 @@ Deployment uses `bin/faceid-server`, an adjacent `lib/` directory of shared libr
 
 ## Build
 
-Native builds support **Linux x86_64** and macOS arm64. Mac build artifacts cannot be used as Linux executables. Build machines need a C++17 compiler, Make, CMake ≥ 3.20, Go ≥ 1.24, curl, tar, and a SHA-256 utility. Linux can install `build-essential cmake curl ca-certificates` and a Go distribution meeting the version requirement.
+Native builds support **Linux x86_64** and macOS arm64. Mac build artifacts cannot be used as Linux executables. Build machines need a C++17 compiler, Make, CMake ≥ 3.20, Go ≥ 1.24, Python ≥ 3.10 for SDK preparation, curl, tar, and a SHA-256 utility. Linux can install `build-essential cmake curl ca-certificates python3` and a Go distribution meeting the version requirement.
 
 ```bash
 bash native/build.sh
 ```
 
-The script pins ONNX Runtime 1.29.0, OpenCV 5.0.0, and nlohmann/json 3.12.0, verifies download SHA-256 values, builds the required OpenCV modules and C++ core, runs CTest and Go unit tests, and generates `dist/native-runtime/`. It defaults to 4 build jobs. Use `JOBS=2` when memory is tight. OpenCV may download additional platform-optimized dependencies, so builds require networking. Dependencies and build outputs stay in ignored directories. After dependencies are built, application-only changes can use `bash native/build.sh --app-only` to skip OpenCV configuration and compilation. Run a full build after changing dependency versions or build options.
+The script pins ONNX Runtime 1.29.0, OpenCV 5.0.0, and nlohmann/json 3.12.0. ONNX Runtime comes from Microsoft's [official NuGet package](https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime/1.29.0), verified against the fixed SHA-512 published in NuGet's catalog. A standard-library Python helper extracts the selected platform's native library, C/C++ headers and license/privacy notices, with the SDK package cached in `dist/native-deps/downloads/`. It requires neither .NET nor the NuGet CLI. Other downloads retain SHA-256 verification. Existing prepared SDK directories are reused.
+
+The script builds the required OpenCV modules and C++ core, runs CTest and Go unit tests, and generates `dist/native-runtime/`. It defaults to 4 build jobs. Use `JOBS=2` when memory is tight. OpenCV may download additional platform-optimized dependencies, so builds require networking. Dependencies and build outputs stay in ignored directories. After dependencies are built, application-only changes can use `bash native/build.sh --app-only` to skip OpenCV configuration and compilation. Run a full build after changing dependency versions or build options.
 
 ```bash
 uv run python tools/export_native_model.py --config configs/n150.yaml
